@@ -975,26 +975,23 @@ function extractMatchTeams(item) {
   const title = normalizeMatchText(item.title);
   if (!title) return null;
 
-  const resultWords = MATCH_RESULT_WORDS.join('|');
+  const resultVerb = '(?:يهزم|هزم|يفوز|فاز|يتغلب|تغلب|ينتصر|انتصر|يسحق|سحق|يخسر|خسر|تعادل|يتعادل|سقط|يسقط)';
 
-  // A wins/defeats B
+  // "A يهزم B" / "A يفوز على B" / "A يتغلب على B"
   let match = title.match(
-    new RegExp('^(.+?)\\s+(?:' + resultWords + ')\\s+(?:على\\s+|امام\\s+|ضد\\s+)?(.+)$')
+    new RegExp('^(.+?)\\s+' + resultVerb + '(?:\\s+(?:على|امام|ضد))?\\s+(.+)$')
   );
 
   if (match) {
-    const home = cleanMatchTeamPhrase(match[1]);
-    const away = cleanMatchTeamPhrase(match[2]);
-    if (isPlausibleTeamPhrase(home) && isPlausibleTeamPhrase(away)) {
-      return [home, away];
+    const left = cleanMatchTeamPhrase(match[1]);
+    const right = cleanMatchTeamPhrase(match[2]);
+    if (isPlausibleTeamPhrase(left) && isPlausibleTeamPhrase(right)) {
+      return [left, right];
     }
   }
 
-  // "A falls by three goals to B" / "A loses before B".
-  match = title.match(
-    new RegExp('^(.+?)\\s+(?:' + resultWords + ')\\s+.*?\\s+(?:امام|أمام|على|ضد)\\s+(.+)
-  // "A vs B", "A ضد B", "A امام B", "A أمام B"
-  match = title.match(/^(.+?)\\s+(?:vs|v|ضد|امام|أمام)\\s+(.+)$/);
+  // "A 3-0 B"
+  match = title.match(/^(.+?)\\s+\\d{1,2}\\s*[-:x]\\s*\\d{1,2}\\s+(.+)$/);
   if (match) {
     const left = cleanMatchTeamPhrase(match[1]);
     const right = cleanMatchTeamPhrase(match[2]);
@@ -1003,8 +1000,8 @@ function extractMatchTeams(item) {
     }
   }
 
-  // Score-first/score-last headlines: "A 3-0 B"
-  match = title.match(/^(.+?)\\s+\d{1,2}\\s*[-:x]\\s*\d{1,2}\\s+(.+)$/);
+  // "A vs B", "A ضد B", "A امام B"
+  match = title.match(/^(.+?)\\s+(?:vs|v|ضد|امام)\\s+(.+)$/);
   if (match) {
     const left = cleanMatchTeamPhrase(match[1]);
     const right = cleanMatchTeamPhrase(match[2]);
@@ -1013,16 +1010,16 @@ function extractMatchTeams(item) {
     }
   }
 
-  // Fall back to the description only when the title did not expose
-  // a reliable two-team relationship.
+  // Fall back to the description only when the title has no reliable
+  // two-team relationship.
   const description = normalizeMatchText(item.description);
-  const descriptionMatch = description.match(
-    new RegExp('^(.+?)\\s+(?:' + resultWords + ')\\s+(?:على\\s+|امام\\s+|ضد\\s+)?(.+)$')
+  match = description.match(
+    new RegExp('^(.+?)\\s+' + resultVerb + '(?:\\s+(?:على|امام|ضد))?\\s+(.+)$')
   );
 
-  if (descriptionMatch) {
-    const left = cleanMatchTeamPhrase(descriptionMatch[1]);
-    const right = cleanMatchTeamPhrase(descriptionMatch[2]);
+  if (match) {
+    const left = cleanMatchTeamPhrase(match[1]);
+    const right = cleanMatchTeamPhrase(match[2]);
     if (isPlausibleTeamPhrase(left) && isPlausibleTeamPhrase(right)) {
       return [left, right];
     }
@@ -1030,7 +1027,6 @@ function extractMatchTeams(item) {
 
   return null;
 }
-
 function getMatchTeamTokens(item) {
   const teams = extractMatchTeams(item);
   return teams ? new Set(teams) : new Set();
