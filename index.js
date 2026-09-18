@@ -192,6 +192,21 @@ function isPrivateIp(address) {
       return isPrivateIp(mappedIpv4Match[1]);
     }
 
+    // Some parsers represent an IPv4-mapped address in hexadecimal,
+    // e.g. ::ffff:7f00:1 == 127.0.0.1.
+    const mappedHexMatch = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (mappedHexMatch) {
+      const high = Number.parseInt(mappedHexMatch[1], 16);
+      const low = Number.parseInt(mappedHexMatch[2], 16);
+      const ipv4 = [
+        high >> 8,
+        high & 0xff,
+        low >> 8,
+        low & 0xff
+      ].join('.');
+      return isPrivateIp(ipv4);
+    }
+
     // IPv4-compatible IPv6 and IPv4-embedded forms.
     const embeddedIpv4Match = normalized.match(/^::(\d{1,3}(?:\.\d{1,3}){3})$/);
     if (embeddedIpv4Match && net.isIP(embeddedIpv4Match[1]) === 4) {
@@ -257,21 +272,3 @@ async function assertSafeExternalUrl(rawUrl) {
 
 async function readResponseTextLimited(response, maxBytes) {
   const contentLength = Number(response.headers.get('content-length') || 0);
-
-  if (contentLength > maxBytes) {
-    throw new Error(`Response too large: ${contentLength} bytes`);
-  }
-
-  if (!response.body) {
-    const text = await response.text();
-    if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('Response too large');
-    return text;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const chunks = [];
-  let totalBytes = 0;
-
-  try {
-    while (true) {
