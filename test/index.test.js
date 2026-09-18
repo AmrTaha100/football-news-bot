@@ -295,3 +295,23 @@ test('published event dedup does not block the same teams for a much later match
 
   assert.equal(hasPublishedEvent(seen, laterMatch), false);
 });
+
+
+test('published event dedup catches alternate match wording across sources', () => {
+  const seen = new Map();
+  markSeen(seen, {
+    link: 'https://site-a.example/match',
+    title: 'برينتفورد يهزم تشيلسي بثلاثية نظيفة',
+    description: 'برينتفورد يفوز على تشيلسي في الدوري الإنجليزي',
+    date: new Date('2026-09-19T00:00:00Z')
+  }, Date.parse('2026-09-19T00:00:00Z'));
+
+  const alternateSource = {
+    link: 'https://site-d.example/match',
+    title: 'تشيلسي يسقط أمام برينتفورد بثلاثة أهداف',
+    description: 'هزيمة تشيلسي بثلاثية أمام برينتفورد',
+    date: new Date('2026-09-19T00:20:00Z')
+  };
+
+  assert.equal(hasPublishedEvent(seen, alternateSource), true);
+});
