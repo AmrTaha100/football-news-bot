@@ -33,7 +33,7 @@ const RSS_URLS = RSS_QUERIES.map(query =>
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
-const MAX_NEWS = 15;
+const MAX_NEWS = 8;
 const HOURS_BACK = 1;
 
 /*
@@ -85,6 +85,129 @@ function cleanText(text = '') {
     .replace(/<[^>]*>/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function calculateNewsScore(item) {
+  const text = `${item.title} ${item.description}`.toLowerCase();
+
+  let score = 0;
+
+  // 🔥 أخبار شديدة الأهمية
+  const veryImportant = [
+    'رسميًا',
+    'رسميا',
+    'يوقع',
+    'وقع',
+    'ينضم',
+    'انتقال',
+    'صفقة',
+    'إقالة',
+    'استقالة',
+    'إصابة',
+    'يغيب',
+    'إيقاف'
+  ];
+
+  for (const word of veryImportant) {
+    if (text.includes(word)) {
+      score += 15;
+    }
+  }
+
+  // 🏆 البطولات والمسابقات الكبرى
+  const majorCompetitions = [
+    'دوري أبطال أوروبا',
+    'دوري الأبطال',
+    'champions league',
+    'كأس العالم',
+    'الدوري الإنجليزي',
+    'الدوري الإسباني',
+    'الدوري الإيطالي',
+    'الدوري الألماني'
+  ];
+
+  for (const word of majorCompetitions) {
+    if (text.includes(word.toLowerCase())) {
+      score += 10;
+    }
+  }
+
+  // ⭐ لاعبين كبار
+  const majorPlayers = [
+    'محمد صلاح',
+    'مبابي',
+    'هالاند',
+    'يامال',
+    'فينيسيوس'
+  ];
+
+  for (const player of majorPlayers) {
+    if (text.includes(player.toLowerCase())) {
+      score += 8;
+    }
+  }
+
+  // 🇪🇬 كرة القدم المصرية
+  const egyptianFootball = [
+    'الأهلي',
+    'الزمالك',
+    'منتخب مصر'
+  ];
+
+  for (const word of egyptianFootball) {
+    if (text.includes(word.toLowerCase())) {
+      score += 7;
+    }
+  }
+
+  // 🚨 كلمات تدل على خبر عاجل أو تطور مهم
+  const breakingWords = [
+    'عاجل',
+    'بشكل رسمي',
+    'يعلن',
+    'أعلن',
+    'قرار',
+    'قرار رسمي',
+    'تطور جديد'
+  ];
+
+  for (const word of breakingWords) {
+    if (text.includes(word.toLowerCase())) {
+      score += 10;
+    }
+  }
+
+  // 🗑️ أخبار تجارية وإعلانية
+  const commercialWords = [
+    'شركة ملابس',
+    'راعٍ',
+    'رعاية',
+    'إعلان تجاري',
+    'سفير العلامة',
+    'علامة تجارية'
+  ];
+
+  for (const word of commercialWords) {
+    if (text.includes(word.toLowerCase())) {
+      score -= 20;
+    }
+  }
+
+  // 🗑️ أخبار غالبًا منخفضة الأولوية
+  const lowPriorityWords = [
+    'فريق الشباب',
+    'كرة الصالات',
+    'تشكيل متوقع',
+    'التشكيل المتوقع'
+  ];
+
+  for (const word of lowPriorityWords) {
+    if (text.includes(word.toLowerCase())) {
+      score -= 10;
+    }
+  }
+
+  return score;
 }
 
 function loadSeen() {
@@ -286,12 +409,30 @@ async function main() {
 
       return true;
     })
-    .sort((a, b) => b.date - a.date)
-    .slice(0, MAX_NEWS);
+    .sort((a, b) => {
+      const scoreDifference =
+        calculateNewsScore(b) - calculateNewsScore(a);
+
+  // لو الـScore متساوي، الأحدث أولًا
+  if (scoreDifference !== 0) {
+    return scoreDifference;
+  }
+
+  return b.date - a.date;
+})
+.slice(0, MAX_NEWS);
 
   console.log(
     `✅ Found ${freshNews.length} new unique news`
   );
+
+  console.log('📊 SNR Scores:');
+
+for (const item of freshNews) {
+  console.log(
+    `   ${calculateNewsScore(item)} → ${item.title}`
+  );
+}
 
   /*
     No new news
