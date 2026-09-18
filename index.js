@@ -209,7 +209,7 @@ async function fetchArticleContent(items) {
 
   const results = await Promise.all(
     items.map(async item => {
-      if (!item.link || !/^https?:\\/\\//i.test(item.link)) {
+      if (!item.link || !/^https?:\/\//i.test(item.link)) {
         return item;
       }
 
@@ -238,13 +238,13 @@ async function fetchArticleContent(items) {
           '';
 
         const articleMatch =
-          html.match(/<article[^>]*>([\\s\\S]*?)<\\/article>/i)?.[1] ||
+          html.match(/<article[^>]*>([\s\S]*?)<\/article>/i)?.[1] ||
           '';
 
         const articleText = cleanText(
           articleMatch
-            .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
-            .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
         );
 
         const descriptionText = cleanText(
@@ -260,7 +260,7 @@ async function fetchArticleContent(items) {
         ]
           .filter(Boolean)
           .join(' ')
-          .replace(/\\s+/g, ' ')
+          .replace(/\s+/g, ' ')
           .trim()
           .slice(0, 3000);
 
