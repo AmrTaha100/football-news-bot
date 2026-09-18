@@ -232,7 +232,7 @@ async function resolveGoogleNewsLinks(items) {
         result &&
         result.status &&
         typeof result.decoded_url === 'string' &&
-        /^https?:\\/\\//i.test(result.decoded_url)
+        /^https?:\/\//i.test(result.decoded_url)
       ) {
         resolvedByGoogleLink.set(
           googleLink,
