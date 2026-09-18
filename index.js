@@ -847,7 +847,7 @@ function getEventTokens(item) {
 
 function extractMatchScore(text = '') {
   const normalized = normalizeEventText(text);
-  const numericMatch = normalized.match(/(?:^|\\s)(\\d{1,2})\\s*[-:x]\\s*(\\d{1,2})(?:$|\\s)/);
+  const numericMatch = normalized.match(/(?:^|\s)(\d{1,2})\s*[-:x]\s*(\d{1,2})(?:$|\s)/);
   if (numericMatch) return [Number(numericMatch[1]), Number(numericMatch[2])];
 
   const arabicNumbers = {
@@ -1423,10 +1423,6 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
       date: new Date(seenAt)
     };
 
-    if (areNewsDuplicates(item, previousItem)) {
-      return true;
-    }
-
     const currentFingerprint = getEventFingerprint(item);
     const previousFingerprint = record.eventFingerprint || getEventFingerprint(previousItem);
 
@@ -1435,23 +1431,27 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
       const previousTeams = new Set(previousFingerprint.teams || []);
       const sharedTeams = [...currentTeams].filter(team => previousTeams.has(team));
 
-      if (
-        sharedTeams.length >= 2 &&
-        currentFingerprint.type === 'match-score' &&
-        previousFingerprint.type === 'match-score' &&
-        currentFingerprint.score?.join('-') === previousFingerprint.score?.join('-')
-      ) {
-        return true;
-      }
+      if (sharedTeams.length >= 2) {
+        // When both sources contain an explicit score, the score is
+        // part of the event identity. Do not let the older generic
+        // token matcher override a confirmed score mismatch.
+        if (
+          currentFingerprint.type === 'match-score' &&
+          previousFingerprint.type === 'match-score'
+        ) {
+          return currentFingerprint.score?.join('-') === previousFingerprint.score?.join('-');
+        }
 
-      if (
-        sharedTeams.length >= 2 &&
-        currentFingerprint.type === 'match' &&
-        previousFingerprint.type === 'match' &&
-        Math.abs(currentTime - seenAt) <= 18 * 60 * 60 * 1000
-      ) {
-        return true;
+        // If one or both sources omit the score, use a short time
+        // window because the same teams can meet again later.
+        if (Math.abs(currentTime - seenAt) <= 18 * 60 * 60 * 1000) {
+          return true;
+        }
       }
+    }
+
+    if (areNewsDuplicates(item, previousItem)) {
+      return true;
     }
 
     // Cross-source match reports can use very different verbs
