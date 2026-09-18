@@ -1418,6 +1418,11 @@ async function main() {
     `✅ Found ${enrichedCandidates.length} unique stories for Gemini (max ${MAX_NEWS})`
   );
 
+  if (enrichedCandidates.length === 0) {
+    console.log('ℹ️ All selected candidates were already published. Nothing to send.');
+    return;
+  }
+
   console.log('📊 SNR Scores:');
 
   for (const item of resolvedCandidates) {
