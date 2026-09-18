@@ -37,6 +37,7 @@ const RSS_URLS = RSS_QUERIES.map(query =>
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 const MAX_NEWS = 15;
+const CANDIDATE_POOL_SIZE = 25;
 const SNR_PRIMARY_COUNT = 10;
 const HOURS_BACK = 1.25;
 
@@ -1117,7 +1118,7 @@ function saveSeen(seen) {
   atomicWriteJson(SEEN_FILE, [...seen]);
 }
 
-function selectCandidates(items) {
+function selectCandidates(items, limit = MAX_NEWS) {
   const ranked = [...items].sort((a, b) => {
     const scoreDifference = calculateNewsScore(b) - calculateNewsScore(a);
     if (scoreDifference !== 0) return scoreDifference;
@@ -1136,7 +1137,7 @@ function selectCandidates(items) {
   }
 
   for (const item of [...ranked].sort((a, b) => b.date - a.date)) {
-    if (selected.length >= MAX_NEWS) break;
+    if (selected.length >= limit) break;
 
     const id = item.googleLink || item.link;
 
@@ -1146,7 +1147,7 @@ function selectCandidates(items) {
     selectedIds.add(id);
   }
 
-  return selected.slice(0, MAX_NEWS);
+  return selected.slice(0, limit);
 }
 
 function splitMessage(text, maxLength = 4000) {
@@ -1383,10 +1384,10 @@ async function main() {
     `🧩 Event dedup: ${beforeEventDedup} → ${deduplicatedNews.length} unique stories`
   );
 
-  const selectedCandidates = selectCandidates(deduplicatedNews);
+  const selectedCandidates = selectCandidates(deduplicatedNews, CANDIDATE_POOL_SIZE);
 
   console.log(
-    `🎯 Candidate mix: SNR top ${Math.min(SNR_PRIMARY_COUNT, selectedCandidates.length)} + freshness backfill up to ${MAX_NEWS}`
+    `🎯 Candidate pool: SNR top ${Math.min(SNR_PRIMARY_COUNT, selectedCandidates.length)} + freshness backfill up to ${CANDIDATE_POOL_SIZE}`
   );
 
   const resolvedCandidates =
@@ -1411,8 +1412,10 @@ async function main() {
     );
   }
 
+  const finalCandidates = canonicalUnseenCandidates.slice(0, MAX_NEWS);
+
   const enrichedCandidates =
-    await fetchArticleContent(canonicalUnseenCandidates);
+    await fetchArticleContent(finalCandidates);
 
   console.log(
     `✅ Found ${enrichedCandidates.length} unique stories for Gemini (max ${MAX_NEWS})`
