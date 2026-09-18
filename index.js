@@ -33,7 +33,7 @@ const RSS_URLS = RSS_QUERIES.map(query =>
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
-const MAX_NEWS = 8;
+const MAX_NEWS = 15;
 const HOURS_BACK = 1.25;
 
 /*
@@ -688,19 +688,11 @@ async function main() {
       uniqueLinks.add(item.link);
 
       return true;
-    })
-    .sort((a, b) => {
-      const scoreDifference =
-        calculateNewsScore(b) - calculateNewsScore(a);
+    });
 
-  // لو الـScore متساوي، الأحدث أولًا
-  if (scoreDifference !== 0) {
-    return scoreDifference;
-  }
-
-  return b.date - a.date;
-})
-.slice(0, MAX_NEWS);
+  console.log(
+    `🧹 Fresh unseen stories: ${freshNews.length}`
+  );
 
   const beforeSemanticDedup = freshNews.length;
 
@@ -724,7 +716,7 @@ async function main() {
     .slice(0, MAX_NEWS);
 
   console.log(
-    `✅ Found ${selectedCandidates.length} unique stories for Gemini`
+    `✅ Found ${selectedCandidates.length} unique stories for Gemini (top ${MAX_NEWS})`
   );
 
   console.log('📊 SNR Scores:');
