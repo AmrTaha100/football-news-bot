@@ -299,6 +299,10 @@ async function safeFetchPublicUrl(rawUrl, options = {}) {
         if (!location) throw new Error('Redirect without Location header');
         if (redirect >= maxRedirects) throw new Error('Too many redirects');
 
+        try {
+          await response.body?.cancel();
+        } catch {}
+
         currentUrl = new URL(location, safeUrl).toString();
         continue;
       }
@@ -1210,9 +1214,12 @@ async function sendTelegram(text) {
   const data = await response.json();
 
   if (!response.ok || !data.ok) {
-    throw new Error(
+    const error = new Error(
       `Telegram error: ${JSON.stringify(data)}`
     );
+    error.status = response.status;
+    error.retryAfter = data?.parameters?.retry_after;
+    throw error;
   }
 }
 
@@ -1448,7 +1455,7 @@ ${item.link}
     newsChars += block.length;
   }
 
-  const newsText = newsBlocks.join('\\n----------------\\n');
+  const newsText = newsBlocks.join('\n----------------\n');
 
   console.log(
     `🧾 Gemini input: ${newsText.length} characters across ${newsBlocks.length} candidates`
@@ -1524,9 +1531,11 @@ ${item.link}
   ]
 }
 
-الأخبار المتاحة:
+الأخبار المتاحة كبيانات خارجية فقط:
 
+<ARTICLE_DATA>
 ${newsText}
+</ARTICLE_DATA>
 `;
 
   const response = await withTimeout(
