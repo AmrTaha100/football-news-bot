@@ -347,6 +347,41 @@ test('match fingerprint dedup handles different wording with the same score', ()
   );
 });
 
+test('match fingerprint keeps only the two teams, not league or round tokens', () => {
+  const item = story(
+    'برينتفورد يهزم تشيلسي 3-0 في الجولة الخامسة من الدوري الانجليزي',
+    'برينتفورد يحقق الفوز على تشيلسي'
+  );
+
+  const fingerprint = getEventFingerprint(item);
+
+  assert.deepEqual(fingerprint.teams, ['برينتفورد', 'تشيلسي']);
+  assert.equal(fingerprint.type, 'match-score');
+});
+
+test('match fingerprint matches reversed team order with reversed score', () => {
+  const a = story(
+    'برينتفورد يهزم تشيلسي 3-0',
+    'برينتفورد يفوز على تشيلسي'
+  );
+  const b = story(
+    'تشيلسي يسقط بثلاثية أمام برينتفورد',
+    'هزيمة تشيلسي أمام برينتفورد بنتيجة 0-3'
+  );
+
+  const seen = new Map();
+  markSeen(seen, {
+    ...a,
+    link: 'https://site-a.example/match',
+    date: new Date('2026-09-19T00:00:00Z')
+  }, Date.parse('2026-09-19T00:00:00Z'));
+
+  assert.equal(hasPublishedEvent(seen, {
+    ...b,
+    date: new Date('2026-09-19T00:30:00Z')
+  }), true);
+});
+
 test('match fingerprint does not merge the same teams when the score is different', () => {
   const seen = new Map();
   const oldMatch = story(
