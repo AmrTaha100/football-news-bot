@@ -851,7 +851,7 @@ function eventCategory(text = '') {
   if (/(عود|تدريب|مدرب)/.test(normalized)) return 'coach';
   if (/(انتقال|ينضم|انضم|صفقه|يوقع|توقيع|تجديد|عقد)/.test(normalized)) return 'transfer';
   if (/(اصابه|اصيب|يغيب|غياب)/.test(normalized)) return 'injury';
-  if (/(فاز|فوز|هزم|هزيم|خسر|خسار|تاهل|يتاهل|يتوج|توج|هدف قاتل|ركله ترجيح)/.test(normalized)) return 'match';
+  if (/(فاز|فوز|يفوز|هزم|يهزم|هزيم|خسر|يخسر|خسار|تغلب|يتغلب|ينتصر|انتصار|سحق|يسحق|تعادل|تعادل|تاهل|يتاهل|يتوج|توج|هدف قاتل|ركله ترجيح|ثلاثيه|ثلاثية|ثنائيه|ثنائية|بهدفين|بثلاثه|بثلاثة|بهدف)/.test(normalized)) return 'match';
   if (/(اقاله|استقال|عقوبه|غرامه|ايقاف)/.test(normalized)) return 'discipline';
 
   return 'general';
@@ -1356,6 +1356,25 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
 
     if (areNewsDuplicates(item, previousItem)) {
       return true;
+    }
+
+    // Cross-source match reports can use very different verbs
+    // ("يهزم", "يتغلب", "يسحق", "يفوز") while retaining the two
+    // team names. Treat two shared title tokens as the same match
+    // only when both stories are confidently classified as matches.
+    const currentCategory = eventCategory(item.title + ' ' + item.description);
+    const previousCategory = eventCategory(
+      previousItem.title + ' ' + previousItem.description
+    );
+
+    if (currentCategory === 'match' && previousCategory === 'match') {
+      const currentTokens = getEventTokens(item);
+      const previousTokens = getEventTokens(previousItem);
+      const shared = [...currentTokens].filter(token => previousTokens.has(token));
+
+      if (shared.length >= 2) {
+        return true;
+      }
     }
   }
 
