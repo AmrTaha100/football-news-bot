@@ -18,7 +18,9 @@ const {
   validateGeminiNews,
   fetchRssFeeds,
   readResponseTextLimited,
-  resolveGoogleNewsLinks
+  resolveGoogleNewsLinks,
+  hasPublishedEvent,
+  markSeen
 } = require('../index');
 
 const story = (title, description = '', date = new Date()) => ({ title, description, date });
@@ -232,4 +234,64 @@ test('Google News decoder failure drops unresolved Google URL candidates', async
 
   assert.equal(result.length, 1);
   assert.equal(result[0].link, 'https://example.com/def');
+});
+
+
+test('published event dedup blocks the same match from a different source', () => {
+  const seen = new Map();
+  markSeen(seen, {
+    link: 'https://site-a.example/match',
+    googleLink: 'https://news.google.com/rss/articles/a',
+    title: 'برينتفورد يهزم تشيلسي بثلاثية نظيفة',
+    description: 'برينتفورد يفوز على تشيلسي في الدوري الإنجليزي',
+    date: new Date('2026-09-19T00:00:00Z')
+  }, Date.parse('2026-09-19T00:00:00Z'));
+
+  const sameEventFromAnotherSource = {
+    link: 'https://site-b.example/match',
+    googleLink: 'https://news.google.com/rss/articles/b',
+    title: 'تشيلسي يتلقى هزيمة قاسية أمام برينتفورد بثلاثة أهداف',
+    description: 'برينتفورد يحسم المباراة بثلاثية في الجولة الخامسة',
+    date: new Date('2026-09-19T00:30:00Z')
+  };
+
+  assert.equal(hasPublishedEvent(seen, sameEventFromAnotherSource), true);
+});
+
+test('published event dedup keeps a different event for the same player', () => {
+  const seen = new Map();
+  markSeen(seen, {
+    link: 'https://site-a.example/salah-contract',
+    title: 'محمد صلاح يجدد عقده مع ليفربول',
+    description: 'النجم المصري مستمر مع النادي',
+    date: new Date('2026-09-19T00:00:00Z')
+  }, Date.parse('2026-09-19T00:00:00Z'));
+
+  const differentEvent = {
+    link: 'https://site-b.example/salah-injury',
+    title: 'محمد صلاح يغيب عن المباراة بسبب الإصابة',
+    description: 'اللاعب لن يشارك بسبب إصابة عضلية',
+    date: new Date('2026-09-19T00:30:00Z')
+  };
+
+  assert.equal(hasPublishedEvent(seen, differentEvent), false);
+});
+
+test('published event dedup does not block the same teams for a much later match', () => {
+  const seen = new Map();
+  markSeen(seen, {
+    link: 'https://site-a.example/match-old',
+    title: 'برينتفورد يهزم تشيلسي بثلاثية نظيفة',
+    description: 'برينتفورد يفوز على تشيلسي',
+    date: new Date('2026-09-10T00:00:00Z')
+  }, Date.parse('2026-09-10T00:00:00Z'));
+
+  const laterMatch = {
+    link: 'https://site-b.example/match-new',
+    title: 'تشيلسي يهزم برينتفورد بهدفين',
+    description: 'تشيلسي يحقق الفوز في مباراة جديدة',
+    date: new Date('2026-09-19T00:00:00Z')
+  };
+
+  assert.equal(hasPublishedEvent(seen, laterMatch), false);
 });
