@@ -512,3 +512,5 @@ main().catch(error => {
 
   process.exit(1);
 });
+
+setInterval(() => {}, 60000);
