@@ -1568,42 +1568,40 @@ ${newsText}
 </ARTICLE_DATA>
 `;
 
+  /*
+    Exactly ONE Gemini API request per run.
+    We intentionally do not retry this call because the bot's
+    design requirement is one Gemini request per hourly run.
+  */
   const response = await withTimeout(
-    withRetry(
-      () => ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'object',
-            properties: {
-              news: {
-                type: 'array',
-                maxItems: MAX_NEWS,
-                items: {
-                  type: 'object',
-                  properties: {
-                    title: { type: 'string' },
-                    summary: { type: 'string' },
-                    link: { type: 'string' }
-                  },
-                  required: ['title', 'summary', 'link'],
-                  additionalProperties: false
-                }
+    ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            news: {
+              type: 'array',
+              maxItems: MAX_NEWS,
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string' },
+                  summary: { type: 'string' },
+                  link: { type: 'string' }
+                },
+                required: ['title', 'summary', 'link'],
+                additionalProperties: false
               }
-            },
-            required: ['news'],
-            additionalProperties: false
-          }
+            }
+          },
+          required: ['news'],
+          additionalProperties: false
         }
-      }),
-      {
-        name: 'Gemini request',
-        attempts: MAX_RETRIES,
-        baseDelay: 1200
       }
-    ),
+    }),
     GEMINI_TIMEOUT_MS,
     'Gemini request'
   );
