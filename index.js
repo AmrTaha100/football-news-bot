@@ -926,7 +926,7 @@ async function main() {
 
   console.log('🔎 Candidates sent to Gemini:');
 
-  selectedCandidates.forEach((item, index) => {
+  resolvedCandidates.forEach((item, index) => {
     console.log(`--- Candidate ${index + 1} ---`);
     console.log(`Title: ${item.title}`);
     console.log(`Description: ${item.description || '(empty)'}`);
