@@ -851,7 +851,7 @@ function eventCategory(text = '') {
   if (/(عود|تدريب|مدرب)/.test(normalized)) return 'coach';
   if (/(انتقال|ينضم|انضم|صفقه|يوقع|توقيع|تجديد|عقد)/.test(normalized)) return 'transfer';
   if (/(اصابه|اصيب|يغيب|غياب)/.test(normalized)) return 'injury';
-  if (/(فاز|فوز|هزم|تاهل|يتاهل|يتوج|توج|هدف قاتل|ركله ترجيح)/.test(normalized)) return 'match';
+  if (/(فاز|فوز|هزم|هزيم|خسر|خسار|تاهل|يتاهل|يتوج|توج|هدف قاتل|ركله ترجيح)/.test(normalized)) return 'match';
   if (/(اقاله|استقال|عقوبه|غرامه|ايقاف)/.test(normalized)) return 'discipline';
 
   return 'general';
@@ -1280,20 +1280,31 @@ function saveSeen(seen) {
   const now = Date.now();
   const normalized = new Map();
 
-  for (const [url, value] of seen) {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      normalized.set(url, {
-        seenAt: Number(value.seenAt),
-        title: typeof value.title === 'string' ? value.title : '',
-        description: typeof value.description === 'string' ? value.description : ''
-      });
-    } else {
-      // Compatibility for callers that still provide a Set-like Map.
-      normalized.set(url, {
-        seenAt: Number(value) || now,
-        title: '',
-        description: ''
-      });
+  if (seen instanceof Set) {
+    for (const url of seen) {
+      if (typeof url === 'string' && url.trim()) {
+        normalized.set(url.trim(), {
+          seenAt: now,
+          title: '',
+          description: ''
+        });
+      }
+    }
+  } else {
+    for (const [url, value] of seen) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        normalized.set(url, {
+          seenAt: Number(value.seenAt),
+          title: typeof value.title === 'string' ? value.title : '',
+          description: typeof value.description === 'string' ? value.description : ''
+        });
+      } else {
+        normalized.set(url, {
+          seenAt: Number(value) || now,
+          title: '',
+          description: ''
+        });
+      }
     }
   }
 
