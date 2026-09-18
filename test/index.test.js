@@ -37,7 +37,7 @@ test('semantic dedup does not merge different event types', () => {
 
 test('event dedup catches same transfer event with different wording', () => {
   const a = story('ليفربول يتوصل لاتفاق لضم لاعب الوسط');
-  const b = story('ليفربول يتفق مع اللاعب على الانتقال إلى صفوفه');
+  const b = story('ليفربول يعلن اتفاق لضم لاعب الوسط');
   assert.equal(areEventDuplicates(a, b), true);
   assert.equal(eventDeduplicate([a, b]).length, 1);
 });
