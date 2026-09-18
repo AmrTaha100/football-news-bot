@@ -16,7 +16,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-const SEEN_FILE = './seen.json';
+const SEEN_FILE = './data/seen.json';
 
 if (!GEMINI_API_KEY) {
   throw new Error('❌ GEMINI_API_KEY غير موجود');
