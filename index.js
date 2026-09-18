@@ -114,6 +114,20 @@ function calculateNewsScore(item) {
     }
   }
 
+  // 🔄 مؤشرات انتقالات وتغييرات تعاقدية
+  const transferSignals = [
+    'يقترب من ضم',
+    'يتفاوض مع',
+    'يرحل',
+    'يجدد عقده'
+  ];
+
+  for (const phrase of transferSignals) {
+    if (text.includes(phrase)) {
+      score += 10;
+    }
+  }
+
   // 🏆 البطولات والمسابقات الكبرى
   const majorCompetitions = [
     'دوري أبطال أوروبا',
