@@ -23,7 +23,7 @@ const story = (title, description = '', date = new Date()) => ({ title, descript
 test('semantic dedup recognizes close paraphrases and keeps one', () => {
   const items = [
     story('برشلونة يعلن تجديد عقد رافينيا حتى 2028', 'النادي أعلن التجديد رسميًا', new Date('2026-09-19T00:00:00Z')),
-    story('برشلونة يجدد عقد رافينيا رسميًا حتى عام 2028', 'تم الإعلان رسميًا عن تمديد عقد اللاعب', new Date('2026-09-18T23:55:00Z'))
+    story('برشلونة يعلن تجديد عقد رافينيا حتى 2028 رسميًا', 'تم الإعلان رسميًا عن تمديد عقد اللاعب', new Date('2026-09-18T23:55:00Z'))
   ];
   assert.equal(areSemanticallyDuplicate(items[0], items[1]), true);
   assert.equal(semanticDeduplicate(items).length, 1);
