@@ -909,47 +909,198 @@ function extractMatchScore(text = '') {
 
   return null;
 }
+function normalizeMatchText(text = '') {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[إأآا]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/[ًٌٍَُِّْـ]/g, '')
+    .replace(/[–—−]/g, '-')
+    .replace(/[،,.;!?()\[\]{}]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const MATCH_TEAM_STOP_WORDS = new Set([
+  'مباراه', 'مباراة', 'الجوله', 'جوله', 'الدوري', 'الاسبان',
+  'الانجليزي', 'الايطالي', 'الالماني', 'الابطال', 'اوروبا',
+  'امم', 'افريقيا', 'في', 'ضمن', 'خلال', 'بعد', 'قبل', 'اليوم',
+  'امس', 'غدا', 'بنتيجه', 'بنتيجة', 'بهدف', 'باهداف', 'هدف',
+  'اهداف', 'ثلاثيه', 'ثلاثية', 'ثلاثه', 'ثلاثة', 'ثنائيه',
+  'ثنائية', 'بهدفين', 'بثلاثه', 'بثلاثة', 'ركله', 'ترجيح',
+  'نظيفه', 'نظيفة', 'مقابل', 'لصالح', 'الشوط', 'الاول', 'الثاني'
+]);
+
+const MATCH_RESULT_WORDS = [
+  'يهزم', 'يهزم', 'هزم', 'يفوز', 'فاز', 'يتغلب', 'تغلب',
+  'ينتصر', 'انتصر', 'يسحق', 'سحق', 'يخسر', 'خسر', 'تعادل',
+  'يتعادل', 'سقط', 'يسقط'
+];
+
+function cleanMatchTeamPhrase(value = '') {
+  let text = normalizeMatchText(value);
+
+  text = text
+    .replace(/^(?:مباراه|مباراة|في|ضمن|بعد|قبل)\s+/g, '')
+    .replace(/\s+(?:في|ضمن|خلال|بعد|قبل|اليوم|امس|غدا)\b.*$/g, '')
+    .replace(/\s+(?:بنتيجه|بنتيجة|بهدف|باهداف|بهدفين|بثلاثه|بثلاثة|ثلاثيه|ثلاثية|ثلاثه|ثلاثة)\b.*$/g, '')
+    .replace(/\s+\d{1,2}\s*[-:x]\s*\d{1,2}\b.*$/g, '')
+    .trim();
+
+  const words = text.split(' ').filter(Boolean);
+  while (words.length && MATCH_TEAM_STOP_WORDS.has(words[0])) words.shift();
+  while (words.length && MATCH_TEAM_STOP_WORDS.has(words[words.length - 1])) words.pop();
+
+  return words.join(' ').trim();
+}
+
+function isPlausibleTeamPhrase(value = '') {
+  const text = cleanMatchTeamPhrase(value);
+  if (!text) return false;
+
+  const words = text.split(' ').filter(Boolean);
+  if (words.length === 0 || words.length > 5) return false;
+  if (words.some(word => MATCH_TEAM_STOP_WORDS.has(word))) return false;
+  if (/^\d+$/.test(text)) return false;
+
+  return words.some(word => /[\u0600-\u06FFa-z]/i.test(word));
+}
+
+function extractMatchTeams(item) {
+  if (eventCategory(item.title + ' ' + item.description) !== 'match') {
+    return null;
+  }
+
+  const title = normalizeMatchText(item.title);
+  if (!title) return null;
+
+  const resultWords = MATCH_RESULT_WORDS.join('|');
+
+  // A wins/defeats B
+  let match = title.match(
+    new RegExp('^(.+?)\\s+(?:' + resultWords + ')\\s+(?:على\\s+|امام\\s+|ضد\\s+)?(.+)$')
+  );
+
+  if (match) {
+    const home = cleanMatchTeamPhrase(match[1]);
+    const away = cleanMatchTeamPhrase(match[2]);
+    if (isPlausibleTeamPhrase(home) && isPlausibleTeamPhrase(away)) {
+      return [home, away];
+    }
+  }
+
+  // A wins over B / B falls before A
+  match = title.match(
+    new RegExp('^(.+?)\\s+(?:' + resultWords + ')\\s+(?:امام|أمام|على|ضد)\\s+(.+)$')
+  );
+
+  if (match) {
+    const left = cleanMatchTeamPhrase(match[1]);
+    const right = cleanMatchTeamPhrase(match[2]);
+    if (isPlausibleTeamPhrase(left) && isPlausibleTeamPhrase(right)) {
+      return [left, right];
+    }
+  }
+
+  // "A vs B", "A ضد B", "A امام B", "A أمام B"
+  match = title.match(/^(.+?)\\s+(?:vs|v|ضد|امام|أمام)\\s+(.+)$/);
+  if (match) {
+    const left = cleanMatchTeamPhrase(match[1]);
+    const right = cleanMatchTeamPhrase(match[2]);
+    if (isPlausibleTeamPhrase(left) && isPlausibleTeamPhrase(right)) {
+      return [left, right];
+    }
+  }
+
+  // Score-first/score-last headlines: "A 3-0 B"
+  match = title.match(/^(.+?)\\s+\d{1,2}\\s*[-:x]\\s*\d{1,2}\\s+(.+)$/);
+  if (match) {
+    const left = cleanMatchTeamPhrase(match[1]);
+    const right = cleanMatchTeamPhrase(match[2]);
+    if (isPlausibleTeamPhrase(left) && isPlausibleTeamPhrase(right)) {
+      return [left, right];
+    }
+  }
+
+  // Fall back to the description only when the title did not expose
+  // a reliable two-team relationship.
+  const description = normalizeMatchText(item.description);
+  const descriptionMatch = description.match(
+    new RegExp('^(.+?)\\s+(?:' + resultWords + ')\\s+(?:على\\s+|امام\\s+|ضد\\s+)?(.+)$')
+  );
+
+  if (descriptionMatch) {
+    const left = cleanMatchTeamPhrase(descriptionMatch[1]);
+    const right = cleanMatchTeamPhrase(descriptionMatch[2]);
+    if (isPlausibleTeamPhrase(left) && isPlausibleTeamPhrase(right)) {
+      return [left, right];
+    }
+  }
+
+  return null;
+}
+
 function getMatchTeamTokens(item) {
-  if (eventCategory(item.title + ' ' + item.description) !== 'match') return new Set();
-
-  const generic = new Set([
-    'فاز', 'فوز', 'يفوز', 'هزم', 'يهزم', 'هزيم', 'خسر', 'يخسر', 'خسار',
-    'تغلب', 'يتغلب', 'ينتصر', 'انتصار', 'سحق', 'يسحق', 'تعادل', 'تاهل',
-    'يتاهل', 'يتوج', 'توج', 'هدف', 'اهداف', 'ثلاثيه', 'ثلاثية', 'ثنائيه',
-    'ثنائية', 'بهدف', 'بهدفين', 'بثلاثه', 'بثلاثة', 'بنتيجة', 'مباراه',
-    'مباراة', 'الجوله', 'جوله', 'الدوري', 'الاسبان', 'الانجليزي',
-    'الايطالي', 'الالماني', 'الابطال', 'اوروبا', 'امم', 'افريقيا',
-    'ركله', 'ترجيح', 'نظيفه', 'نظيفة', 'امام', 'علي', 'على'
-  ]);
-
-  return new Set([...getEventTokens(item)].filter(token => !generic.has(token)));
+  const teams = extractMatchTeams(item);
+  return teams ? new Set(teams) : new Set();
 }
 
 function getEventFingerprint(item) {
   const category = eventCategory(item.title + ' ' + item.description);
   if (category !== 'match') return null;
 
-  const teams = [...getMatchTeamTokens(item)].sort();
+  const teams = extractMatchTeams(item);
+  if (!teams || teams.length !== 2 || teams[0] === teams[1]) return null;
+
   const score = extractMatchScore(item.title + ' ' + item.description);
 
-  if (teams.length >= 2 && score) {
-    return {
-      type: 'match-score',
-      key: 'match-score:' + teams.join('|') + ':' + [...score].sort((a, b) => a - b).join('-'),
-      teams,
-      score: [...score].sort((a, b) => a - b)
-    };
+  const direct = score
+    ? teams.join('|') + ':' + score.join('-')
+    : teams.join('|');
+
+  const reversed = score
+    ? teams.slice().reverse().join('|') + ':' + score.slice().reverse().join('-')
+    : teams.slice().reverse().join('|');
+
+  const key = direct < reversed ? direct : reversed;
+
+  return {
+    type: score ? 'match-score' : 'match',
+    key: (score ? 'match-score:' : 'match:') + key,
+    teams,
+    ...(score ? { score } : {})
+  };
+}
+
+function areMatchFingerprintsSameEvent(current, previous) {
+  if (!current || !previous) return false;
+  if (current.type !== 'match-score' || previous.type !== 'match-score') return false;
+
+  const sameDirection =
+    current.teams[0] === previous.teams[0] &&
+    current.teams[1] === previous.teams[1] &&
+    current.score[0] === previous.score[0] &&
+    current.score[1] === previous.score[1];
+
+  const reversedDirection =
+    current.teams[0] === previous.teams[1] &&
+    current.teams[1] === previous.teams[0] &&
+    current.score[0] === previous.score[1] &&
+    current.score[1] === previous.score[0];
+
+  return sameDirection || reversedDirection;
+}
+
+function areMatchTeamsSame(current, previous) {
+  if (!current || !previous || current.teams?.length !== 2 || previous.teams?.length !== 2) {
+    return false;
   }
 
-  if (teams.length >= 2) {
-    return {
-      type: 'match',
-      key: 'match:' + teams.join('|'),
-      teams
-    };
-  }
-
-  return null;
+  return (
+    (current.teams[0] === previous.teams[0] && current.teams[1] === previous.teams[1]) ||
+    (current.teams[0] === previous.teams[1] && current.teams[1] === previous.teams[0])
+  );
 }
 
 function eventCategory(text = '') {
@@ -1363,7 +1514,10 @@ function loadSeen() {
         seen.set(item.url.trim(), {
           seenAt: Number(item.seenAt),
           title: typeof item.title === 'string' ? item.title : '',
-          description: typeof item.description === 'string' ? item.description : ''
+          description: typeof item.description === 'string' ? item.description : '',
+          ...(item.eventFingerprint && typeof item.eventFingerprint === 'object'
+            ? { eventFingerprint: item.eventFingerprint }
+            : {})
         });
       }
     }
@@ -1454,6 +1608,8 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
     ? item.date.getTime()
     : now;
 
+  const currentFingerprint = getEventFingerprint(item);
+
   for (const record of seen.values()) {
     if (!record?.title) continue;
 
@@ -1467,50 +1623,58 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
       date: new Date(seenAt)
     };
 
-    const currentFingerprint = getEventFingerprint(item);
-    const previousFingerprint = record.eventFingerprint || getEventFingerprint(previousItem);
+    const previousFingerprint =
+      record.eventFingerprint || getEventFingerprint(previousItem);
 
     if (currentFingerprint && previousFingerprint) {
-      const currentTeams = new Set(currentFingerprint.teams || []);
-      const previousTeams = new Set(previousFingerprint.teams || []);
-      const sharedTeams = [...currentTeams].filter(team => previousTeams.has(team));
+      const sameTeams = areMatchTeamsSame(currentFingerprint, previousFingerprint);
 
-      if (sharedTeams.length >= 2) {
-        // A fingerprint with a score is authoritative: the same teams
-        // with a different score represent a different match.
+      if (sameTeams) {
+        // Explicit scores are authoritative. If both reports provide a
+        // score, only the same result (including reversed home/away
+        // ordering) can represent the same match.
         if (
           currentFingerprint.type === 'match-score' &&
           previousFingerprint.type === 'match-score'
         ) {
-          return currentFingerprint.score?.join('-') === previousFingerprint.score?.join('-');
+          if (areMatchFingerprintsSameEvent(currentFingerprint, previousFingerprint)) {
+            return true;
+          }
+
+          // Same teams + different confirmed scores = different match.
+          continue;
         }
 
-        // Without a score, only treat reports as the same match inside
-        // the short window. Do not let the generic token matcher below
-        // override this decision.
-        return Math.abs(currentTime - seenAt) <= 18 * 60 * 60 * 1000;
+        // If either report lacks a score, require a short window because
+        // the same teams can legitimately meet again later.
+        if (Math.abs(currentTime - seenAt) <= 18 * 60 * 60 * 1000) {
+          return true;
+        }
+
+        continue;
       }
     }
 
-    if (areNewsDuplicates(item, previousItem)) {
-      return true;
-    }
-
-    // Cross-source match reports can use very different verbs while
-    // retaining the two team names. Use this fallback only when a
-    // reliable two-team fingerprint was not available above.
-    const currentCategory = eventCategory(item.title + ' ' + item.description);
-    const previousCategory = eventCategory(
-      previousItem.title + ' ' + previousItem.description
-    );
-
-    if (currentCategory === 'match' && previousCategory === 'match') {
-      const currentTokens = getEventTokens(item);
-      const previousTokens = getEventTokens(previousItem);
-      const shared = [...currentTokens].filter(token => previousTokens.has(token));
-
-      if (shared.length >= 2) {
+    // Only use the older generic matcher when no reliable two-team
+    // fingerprint was available for both reports.
+    if (!currentFingerprint || !previousFingerprint) {
+      if (areNewsDuplicates(item, previousItem)) {
         return true;
+      }
+
+      const currentCategory = eventCategory(item.title + ' ' + item.description);
+      const previousCategory = eventCategory(
+        previousItem.title + ' ' + previousItem.description
+      );
+
+      if (currentCategory === 'match' && previousCategory === 'match') {
+        const currentTokens = getEventTokens(item);
+        const previousTokens = getEventTokens(previousItem);
+        const shared = [...currentTokens].filter(token => previousTokens.has(token));
+
+        if (shared.length >= 2) {
+          return true;
+        }
       }
     }
   }
