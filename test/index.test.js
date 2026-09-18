@@ -15,7 +15,8 @@ const {
   atomicWriteJson,
   loadSeen,
   saveSeen,
-  validateGeminiNews
+  validateGeminiNews,
+  fetchRssFeeds
 } = require('../index');
 
 const story = (title, description = '', date = new Date()) => ({ title, description, date });
@@ -111,5 +112,46 @@ test('SSRF guard blocks local hostnames before DNS resolution', async () => {
   await assert.rejects(
     () => assertSafeExternalUrl('http://localhost/'),
     /Private\/local hostname blocked/
+  );
+});
+
+
+test('RSS handling keeps successful feeds when one feed fails', async () => {
+  const result = await fetchRssFeeds(
+    ['feed-1', 'feed-2', 'feed-3'],
+    async (_url, index) => {
+      if (index === 1) {
+        throw new Error('temporary RSS outage');
+      }
+
+      return {
+        items: [
+          {
+            title: `story-${index}`,
+            link: `https://example.com/${index}`
+          }
+        ]
+      };
+    }
+  );
+
+  assert.equal(result.successfulCount, 2);
+  assert.equal(result.failedCount, 1);
+  assert.equal(result.items.length, 2);
+  assert.deepEqual(
+    result.items.map(item => item.title),
+    ['story-0', 'story-2']
+  );
+});
+
+test('RSS handling aborts when every feed fails instead of reporting no news', async () => {
+  await assert.rejects(
+    () => fetchRssFeeds(
+      ['feed-1', 'feed-2'],
+      async () => {
+        throw new Error('RSS unavailable');
+      }
+    ),
+    /All 2 RSS feeds failed/
   );
 });
