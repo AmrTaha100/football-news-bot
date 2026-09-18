@@ -132,8 +132,11 @@ async function withRetry(fn, { name = 'operation', attempts = MAX_RETRIES, baseD
       lastError = error;
       if (attempt >= attempts || !isRetryableError(error)) throw error;
 
+      const retryAfterMs = Number(error?.retryAfter || 0) * 1000;
       const jitter = Math.floor(Math.random() * 500);
-      const delay = Math.min(8000, baseDelay * (2 ** (attempt - 1)) + jitter);
+      const delay = retryAfterMs > 0
+        ? retryAfterMs + jitter
+        : Math.min(8000, baseDelay * (2 ** (attempt - 1)) + jitter);
 
       console.warn(`⚠️ ${name} failed (attempt ${attempt}/${attempts}). Retrying in ${delay}ms...`);
       await sleep(delay);
@@ -1389,11 +1392,30 @@ async function main() {
   const resolvedCandidates =
     await resolveGoogleNewsLinks(selectedCandidates);
 
+  const canonicalUnseenCandidates = resolvedCandidates.filter(item => {
+    const canonicalLink = typeof item.link === 'string'
+      ? item.link.trim()
+      : '';
+
+    if (canonicalLink && seen.has(canonicalLink)) {
+      console.log(`♻️ Skipping previously published source: ${item.title}`);
+      return false;
+    }
+
+    return true;
+  });
+
+  if (canonicalUnseenCandidates.length !== resolvedCandidates.length) {
+    console.log(
+      `♻️ Canonical seen filter: ${resolvedCandidates.length} → ${canonicalUnseenCandidates.length}`
+    );
+  }
+
   const enrichedCandidates =
-    await fetchArticleContent(resolvedCandidates);
+    await fetchArticleContent(canonicalUnseenCandidates);
 
   console.log(
-    `✅ Found ${enrichedCandidates.length} unique stories for Gemini (top ${MAX_NEWS})`
+    `✅ Found ${enrichedCandidates.length} unique stories for Gemini (max ${MAX_NEWS})`
   );
 
   console.log('📊 SNR Scores:');
@@ -1654,7 +1676,8 @@ ${newsText}
       ...item,
       title: title.slice(0, 180),
       summary: summary.slice(0, 600),
-      link
+      link,
+      googleLink: candidateByLink.get(link).googleLink || null
     });
   }
 
@@ -1671,64 +1694,84 @@ ${newsText}
 
   /*
     =========================================================
-    FORMAT FOR TELEGRAM
+    FORMAT + SEND FOR TELEGRAM
     =========================================================
   */
 
-  result = selectedNews
-    .map(item =>
-      `<b>⚽ ${item.title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>\n\n` +
-      `${item.summary.replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n\n` +
-      `<a href="${item.link.replace(/"/g, '&quot;')}">🔗 اقرأ الخبر</a>`
-    )
-    .join('\n\n');
+  const escapeHtml = text =>
+    text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
 
-  result = result.trim();
+  const formatNewsItem = item =>
+    `<b>⚽ ${escapeHtml(item.title)}</b>\\n\\n` +
+    `${escapeHtml(item.summary)}\\n\\n` +
+    `<a href="${escapeHtml(item.link)}">🔗 اقرأ الخبر</a>`;
 
-  /*
-    =========================================================
-    SPLIT TELEGRAM MESSAGE
-    =========================================================
-  */
+  const messageGroups = [];
+  let currentGroup = [];
+  let currentLength = 0;
 
-  const messages =
-    splitMessage(result);
+  for (const item of selectedNews) {
+    const card = formatNewsItem(item);
+    const separatorLength = currentGroup.length ? 2 : 0;
+
+    if (
+      currentGroup.length > 0 &&
+      currentLength + separatorLength + card.length > 3900
+    ) {
+      messageGroups.push(currentGroup);
+      currentGroup = [];
+      currentLength = 0;
+    }
+
+    currentGroup.push(item);
+    currentLength += (currentGroup.length > 1 ? 2 : 0) + card.length;
+  }
+
+  if (currentGroup.length > 0) {
+    messageGroups.push(currentGroup);
+  }
 
   console.log(
-    `📨 Sending ${messages.length} Telegram message(s)...`
+    `📨 Sending ${messageGroups.length} Telegram message(s)...`
   );
 
-  for (const message of messages) {
+  /*
+    Save each group only AFTER Telegram confirms that group.
+    If a later group fails, already-delivered groups will not be
+    repeated on the next run.
+  */
+
+  for (const group of messageGroups) {
+    const message = group
+      .map(formatNewsItem)
+      .join('\\n\\n');
+
     await sendTelegram(message);
 
-    if (messages.length > 1) {
-      await new Promise(resolve =>
-        setTimeout(resolve, 500)
-      );
+    for (const item of group) {
+      if (item.googleLink) {
+        seen.add(item.googleLink.trim());
+      }
+
+      if (item.link) {
+        seen.add(item.link.trim());
+      }
+    }
+
+    saveSeen(seen);
+
+    console.log(
+      `💾 Saved ${group.length} delivered news item(s). Seen total: ${seen.size}`
+    );
+
+    if (messageGroups.length > 1) {
+      await sleep(1000);
     }
   }
-
-  /*
-    =========================================================
-    SAVE SEEN NEWS
-    =========================================================
-  */
-
-  const selectedLinks = new Set(
-    selectedNews.map(item => item.link.trim())
-  );
-
-  for (const item of resolvedCandidates) {
-    if (selectedLinks.has(item.link.trim())) {
-      seen.add(item.googleLink || item.link);
-    }
-  }
-
-  saveSeen(seen);
-
-  console.log(
-    `💾 Seen news saved: ${seen.size} links`
-  );
 
   console.log('🎉 DONE!');
 }
