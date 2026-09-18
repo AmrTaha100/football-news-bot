@@ -726,6 +726,15 @@ async function main() {
       `   ${calculateNewsScore(item)} → ${item.title}`
     );
   }
+
+  console.log('🔎 Candidates sent to Gemini:');
+
+  selectedCandidates.forEach((item, index) => {
+    console.log(`--- Candidate ${index + 1} ---`);
+    console.log(`Title: ${item.title}`);
+    console.log(`Description: ${item.description || '(empty)'}`);
+    console.log(`Link: ${item.link}`);
+  });
   /*
     No new news
   */
