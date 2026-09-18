@@ -13,6 +13,7 @@
   "type": "commonjs",
   "dependencies": {
     "@google/genai": "^2.23.0",
-    "rss-parser": "^3.13.0"
+    "rss-parser": "^3.13.0",
+    "google-news-url-decoder": "^1.2.2"
   }
 }
