@@ -796,7 +796,7 @@ ${newsText}
 
   const selectedLinks = new Set();
 
-  for (const match of result.matchAll(/https?:\\/\\/[^\\s<)]+/g)) {
+  for (const match of result.matchAll(/https?:\/\/[^\s<)]+/g)) {
     selectedLinks.add(
       match[0].replace(/[),.]+$/, '')
     );
