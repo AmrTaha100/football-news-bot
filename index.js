@@ -70,27 +70,29 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
   =========================================================
 */
 
-const DATA_DIR = '/app/data';
+const DATA_DIR = process.env.DATA_DIR || '/app/data';
 const SEEN_FILE = `${DATA_DIR}/seen.json`;
 const RUN_LOCK_FILE = `${DATA_DIR}/run.lock`;
 
-if (!GEMINI_API_KEY) {
+const IS_TEST = process.env.NODE_ENV === 'test';
+
+if (!IS_TEST && !GEMINI_API_KEY) {
   throw new Error('❌ GEMINI_API_KEY غير موجود');
 }
 
-if (!TELEGRAM_BOT_TOKEN) {
+if (!IS_TEST && !TELEGRAM_BOT_TOKEN) {
   throw new Error('❌ TELEGRAM_BOT_TOKEN غير موجود');
 }
 
-if (!TELEGRAM_CHAT_ID) {
+if (!IS_TEST && !TELEGRAM_CHAT_ID) {
   throw new Error('❌ TELEGRAM_CHAT_ID غير موجود');
 }
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const ai = new GoogleGenAI({
-  apiKey: GEMINI_API_KEY
-});
+const ai = GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
+  : null;
 
 const googleDecoder = new GoogleDecoder();
 
@@ -1227,6 +1229,56 @@ async function sendTelegram(text) {
   }
 }
 
+function validateGeminiNews(parsed, enrichedCandidates) {
+  if (!parsed || !Array.isArray(parsed.news)) {
+    throw new Error('❌ Gemini JSON missing news array');
+  }
+
+  const candidateByLink = new Map(
+    enrichedCandidates
+      .filter(item => typeof item.link === 'string' && item.link.trim())
+      .map(item => [item.link.trim(), item])
+  );
+
+  const selectedNews = [];
+  const selectedLinkSet = new Set();
+
+  for (const item of parsed.news) {
+    if (
+      !item ||
+      typeof item.title !== 'string' ||
+      typeof item.summary !== 'string' ||
+      typeof item.link !== 'string'
+    ) continue;
+
+    const title = item.title.trim();
+    const summary = item.summary.trim();
+    const link = item.link.trim();
+
+    if (!title || !summary || !candidateByLink.has(link)) {
+      console.warn('⚠️ Ignoring invalid Gemini selection:', {
+        title: title.slice(0, 80),
+        link
+      });
+      continue;
+    }
+
+    if (selectedLinkSet.has(link)) continue;
+
+    selectedLinkSet.add(link);
+
+    selectedNews.push({
+      ...item,
+      title: title.slice(0, 180),
+      summary: summary.slice(0, 600),
+      link,
+      googleLink: candidateByLink.get(link).googleLink || null
+    });
+  }
+
+  return selectedNews;
+}
+
 /*
   =========================================================
   MAIN
@@ -1645,47 +1697,7 @@ ${newsText}
     throw new Error('❌ Gemini JSON missing news array');
   }
 
-  const candidateByLink = new Map(
-    enrichedCandidates
-      .filter(item => item.link)
-      .map(item => [item.link.trim(), item])
-  );
-
-  const selectedNews = [];
-  const selectedLinkSet = new Set();
-
-  for (const item of Array.isArray(parsed.news) ? parsed.news : []) {
-    if (
-      !item ||
-      typeof item.title !== 'string' ||
-      typeof item.summary !== 'string' ||
-      typeof item.link !== 'string'
-    ) continue;
-
-    const title = item.title.trim();
-    const summary = item.summary.trim();
-    const link = item.link.trim();
-
-    if (!title || !summary || !candidateByLink.has(link)) {
-      console.warn('⚠️ Ignoring invalid Gemini selection:', {
-        title: title.slice(0, 80),
-        link
-      });
-      continue;
-    }
-
-    if (selectedLinkSet.has(link)) continue;
-
-    selectedLinkSet.add(link);
-
-    selectedNews.push({
-      ...item,
-      title: title.slice(0, 180),
-      summary: summary.slice(0, 600),
-      link,
-      googleLink: candidateByLink.get(link).googleLink || null
-    });
-  }
+  const selectedNews = validateGeminiNews(parsed, enrichedCandidates);
 
   console.log(
     `🧩 Gemini validation: ${Array.isArray(parsed.news) ? parsed.news.length : 0} → ${selectedNews.length} valid news`
@@ -1788,31 +1800,45 @@ ${newsText}
   =========================================================
 */
 
-if (!acquireRunLock()) {
-  process.exit(0);
+if (require.main === module) {
+  if (!acquireRunLock()) {
+    process.exit(0);
+  }
+
+  main()
+    .catch(error => {
+      console.error('❌ ERROR:');
+      console.error('Name:', error?.name || 'Unknown');
+      console.error('Message:', error?.message || '(empty)');
+      console.error('Status:', error?.status || '(none)');
+      console.error('Code:', error?.code || '(none)');
+      console.error('Cause:', error?.cause?.message || '(none)');
+      console.error(
+        'Details:',
+        JSON.stringify({
+          name: error?.name,
+          message: error?.message,
+          status: error?.status,
+          code: error?.code,
+          cause: error?.cause?.message
+        }, null, 2)
+      );
+      process.exitCode = 1;
+    })
+    .finally(() => {
+      releaseRunLock();
+    });
 }
 
-main()
-  .catch(error => {
-    console.error('❌ ERROR:');
-    console.error('Name:', error?.name || 'Unknown');
-    console.error('Message:', error?.message || '(empty)');
-    console.error('Status:', error?.status || '(none)');
-    console.error('Code:', error?.code || '(none)');
-    console.error('Cause:', error?.cause?.message || '(none)');
-    console.error(
-      'Details:',
-      JSON.stringify({
-        name: error?.name,
-        message: error?.message,
-        status: error?.status,
-        code: error?.code,
-        cause: error?.cause?.message
-      }, null, 2)
-    );
-
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    releaseRunLock();
-  });
+module.exports = {
+  areSemanticallyDuplicate,
+  semanticDeduplicate,
+  areEventDuplicates,
+  eventDeduplicate,
+  normalizeArabic,
+  jaccardSimilarity,
+  atomicWriteJson,
+  loadSeen,
+  saveSeen,
+  validateGeminiNews
+};
