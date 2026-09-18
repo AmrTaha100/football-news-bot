@@ -2032,6 +2032,8 @@ module.exports = {
   fetchRssFeeds,
   readResponseTextLimited,
   resolveGoogleNewsLinks,
+  hasPublishedEvent,
+  markSeen,
   assertSafeExternalUrl,
   isPrivateIp
 };
