@@ -10,7 +10,7 @@ const RSS_URL =
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 const MAX_NEWS = 10;
-const HOURS_BACK = 1;
+const HOURS_BACK = 24;
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
