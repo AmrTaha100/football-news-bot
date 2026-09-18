@@ -239,6 +239,10 @@ async function assertSafeExternalUrl(rawUrl) {
   }
 
   const hostname = url.hostname.toLowerCase();
+  const ipHostname =
+    hostname.startsWith('[') && hostname.endsWith(']')
+      ? hostname.slice(1, -1)
+      : hostname;
 
   if (
     hostname === 'localhost' ||
@@ -249,8 +253,8 @@ async function assertSafeExternalUrl(rawUrl) {
     throw new Error('Private/local hostname blocked');
   }
 
-  if (net.isIP(hostname)) {
-    if (isPrivateIp(hostname)) throw new Error('Private IP blocked');
+  if (net.isIP(ipHostname)) {
+    if (isPrivateIp(ipHostname)) throw new Error('Private IP blocked');
     return url;
   }
 
