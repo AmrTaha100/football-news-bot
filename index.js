@@ -846,25 +846,69 @@ function getEventTokens(item) {
 }
 
 function extractMatchScore(text = '') {
-  const normalized = normalizeEventText(text);
-  const numericMatch = normalized.match(/(?:^|\s)(\d{1,2})\s*[-:x]\s*(\d{1,2})(?:$|\s)/);
-  if (numericMatch) return [Number(numericMatch[1]), Number(numericMatch[2])];
+  const source = String(text || '')
+    .toLowerCase()
+    .replace(/[إأآا]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/[ًٌٍَُِّْـ]/g, '')
+    .replace(/[–—−]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Keep numeric scores before normalizeArabic removes punctuation.
+  const numericMatch = source.match(/(?:^|\s)(\d{1,2})\s*[-:x]\s*(\d{1,2})(?:$|\s)/);
+  if (numericMatch) {
+    return [Number(numericMatch[1]), Number(numericMatch[2])];
+  }
 
   const arabicNumbers = {
-    'صفر': 0, 'هدف': 1, 'هدفين': 2, 'ثلاثه': 3, 'ثلاثية': 3, 'ثلاثيه': 3,
-    'اربعه': 4, 'اربعة': 4, 'خمسه': 5, 'خمسة': 5
+    'صفر': 0,
+    'هدف': 1,
+    'هدفين': 2,
+    'اثنين': 2,
+    'اثنان': 2,
+    'ثلاثه': 3,
+    'ثلاثية': 3,
+    'ثلاثيه': 3,
+    'اربعه': 4,
+    'اربعة': 4,
+    'خمسه': 5,
+    'خمسة': 5
   };
-  const words = normalized.split(' ');
-  for (let i = 0; i < words.length - 2; i++) {
+
+  const words = source
+    .replace(/[،,.;!?()\[\]{}]/g, ' ')
+    .split(' ')
+    .filter(Boolean);
+
+  // "ثلاثية نظيفة" / "ثلاثة أهداف" is conventionally a 3-0 result.
+  for (let i = 0; i < words.length; i++) {
+    if (
+      (words[i] === 'ثلاثيه' || words[i] === 'ثلاثية' || words[i] === 'ثلاثه') &&
+      (words[i + 1] === 'نظيفه' || words[i + 1] === 'نظيفة' ||
+       words[i + 1] === 'اهداف' || words[i + 1] === 'هدف')
+    ) {
+      return [3, 0];
+    }
+  }
+
+  // Handle explicit Arabic score phrasing such as "ثلاثة أهداف مقابل هدف".
+  for (let i = 0; i < words.length - 3; i++) {
     const left = arabicNumbers[words[i]];
-    const right = arabicNumbers[words[i + 2]];
-    if (Number.isInteger(left) && words[i + 1] === 'بهدف' && Number.isInteger(right)) {
+    const right = arabicNumbers[words[i + 3]];
+    if (
+      Number.isInteger(left) &&
+      (words[i + 1] === 'اهداف' || words[i + 1] === 'هدف') &&
+      (words[i + 2] === 'مقابل' || words[i + 2] === 'لصالح') &&
+      Number.isInteger(right)
+    ) {
       return [left, right];
     }
   }
+
   return null;
 }
-
 function getMatchTeamTokens(item) {
   if (eventCategory(item.title + ' ' + item.description) !== 'match') return new Set();
 
@@ -1432,9 +1476,8 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
       const sharedTeams = [...currentTeams].filter(team => previousTeams.has(team));
 
       if (sharedTeams.length >= 2) {
-        // When both sources contain an explicit score, the score is
-        // part of the event identity. Do not let the older generic
-        // token matcher override a confirmed score mismatch.
+        // A fingerprint with a score is authoritative: the same teams
+        // with a different score represent a different match.
         if (
           currentFingerprint.type === 'match-score' &&
           previousFingerprint.type === 'match-score'
@@ -1442,11 +1485,10 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
           return currentFingerprint.score?.join('-') === previousFingerprint.score?.join('-');
         }
 
-        // If one or both sources omit the score, use a short time
-        // window because the same teams can meet again later.
-        if (Math.abs(currentTime - seenAt) <= 18 * 60 * 60 * 1000) {
-          return true;
-        }
+        // Without a score, only treat reports as the same match inside
+        // the short window. Do not let the generic token matcher below
+        // override this decision.
+        return Math.abs(currentTime - seenAt) <= 18 * 60 * 60 * 1000;
       }
     }
 
@@ -1454,10 +1496,9 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
       return true;
     }
 
-    // Cross-source match reports can use very different verbs
-    // ("يهزم", "يتغلب", "يسحق", "يفوز") while retaining the two
-    // team names. Treat two shared title tokens as the same match
-    // only when both stories are confidently classified as matches.
+    // Cross-source match reports can use very different verbs while
+    // retaining the two team names. Use this fallback only when a
+    // reliable two-team fingerprint was not available above.
     const currentCategory = eventCategory(item.title + ' ' + item.description);
     const previousCategory = eventCategory(
       previousItem.title + ' ' + previousItem.description
@@ -1476,7 +1517,6 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
 
   return false;
 }
-
 function selectCandidates(items, limit = MAX_NEWS) {
   const ranked = [...items].sort((a, b) => {
     const scoreDifference = calculateNewsScore(b) - calculateNewsScore(a);
