@@ -51,6 +51,9 @@ const FETCH_TIMEOUT_MS = 8000;
 const GEMINI_TIMEOUT_MS = 45000;
 const TELEGRAM_TIMEOUT_MS = 15000;
 const RSS_TIMEOUT_MS = 15000;
+const RSS_MAX_BYTES = 1024 * 1024;
+const SEEN_RETENTION_DAYS = 30;
+const SEEN_RETENTION_MS = SEEN_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const MAX_RETRIES = 3;
 
 /*
@@ -284,7 +287,7 @@ async function fetchRssFeeds(urls = RSS_URLS, loadFeed = async (url, index) => {
         throw new Error(`RSS HTTP ${response.status}`);
       }
 
-      const xml = await response.text();
+      const xml = await readResponseTextLimited(response, RSS_MAX_BYTES);
       return parser.parseString(xml);
     },
     {
@@ -721,7 +724,7 @@ async function fetchArticleContent(items) {
   return results;
 }
 
-async function resolveGoogleNewsLinks(items) {
+async function resolveGoogleNewsLinks(items, decode = url => googleDecoder.decode(url)) {
   const googleItems = items.filter(item =>
     typeof item.googleLink === 'string' &&
     item.googleLink.includes('news.google.com/rss/articles/')
@@ -749,7 +752,7 @@ async function resolveGoogleNewsLinks(items) {
 
       try {
         const result = await withRetry(
-          () => googleDecoder.decode(item.googleLink),
+          () => decode(item.googleLink),
           {
             name: `Google URL decode: ${item.title.slice(0, 60)}`,
             attempts: 2,
@@ -779,6 +782,10 @@ async function resolveGoogleNewsLinks(items) {
         console.warn(
           `⚠️ Google News URL resolution failed: ${item.title} — ${getErrorText(error) || error.name || 'unknown error'}`
         );
+
+        // Never allow an unresolved news.google.com URL to reach
+        // article fetching, Gemini, or Telegram.
+        resolvedItems[index] = null;
       }
     }
   }
@@ -791,7 +798,7 @@ async function resolveGoogleNewsLinks(items) {
   );
 
   console.log(`🔗 Resolved ${resolvedCount}/${googleItems.length} Google News links`);
-  return resolvedItems;
+  return resolvedItems.filter(Boolean);
 }
 
 
@@ -1198,8 +1205,20 @@ function calculateNewsScore(item) {
 
   return eventScore + contextScore + freshnessScore + penalty;
 }
+function pruneSeen(seen, now = Date.now()) {
+  const cutoff = now - SEEN_RETENTION_MS;
+
+  for (const [url, seenAt] of seen) {
+    if (!Number.isFinite(seenAt) || seenAt < cutoff) {
+      seen.delete(url);
+    }
+  }
+
+  return seen;
+}
+
 function loadSeen() {
-  if (!fs.existsSync(SEEN_FILE)) return new Set();
+  if (!fs.existsSync(SEEN_FILE)) return new Map();
 
   try {
     const data = JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8'));
@@ -1208,9 +1227,28 @@ function loadSeen() {
       throw new Error('seen.json must contain an array');
     }
 
-    return new Set(
-      data.filter(item => typeof item === 'string' && item.trim())
-    );
+    const now = Date.now();
+    const seen = new Map();
+
+    for (const item of data) {
+      if (typeof item === 'string' && item.trim()) {
+        // Backward compatibility with the old string-only format.
+        seen.set(item.trim(), now);
+        continue;
+      }
+
+      if (
+        item &&
+        typeof item === 'object' &&
+        typeof item.url === 'string' &&
+        item.url.trim() &&
+        Number.isFinite(Number(item.seenAt))
+      ) {
+        seen.set(item.url.trim(), Number(item.seenAt));
+      }
+    }
+
+    return pruneSeen(seen, now);
   } catch (error) {
     const backupPath = `${SEEN_FILE}.corrupt-${Date.now()}`;
 
@@ -1226,7 +1264,17 @@ function loadSeen() {
 }
 
 function saveSeen(seen) {
-  atomicWriteJson(SEEN_FILE, [...seen]);
+  const now = Date.now();
+  const normalized = seen instanceof Map
+    ? new Map(seen)
+    : new Map([...seen].map(url => [url, now]));
+
+  pruneSeen(normalized, now);
+
+  atomicWriteJson(
+    SEEN_FILE,
+    [...normalized].map(([url, seenAt]) => ({ url, seenAt }))
+  );
 }
 
 function selectCandidates(items, limit = MAX_NEWS) {
@@ -1839,11 +1887,11 @@ ${newsText}
 
     for (const item of group) {
       if (item.googleLink) {
-        seen.add(item.googleLink.trim());
+        seen.set(item.googleLink.trim(), Date.now());
       }
 
       if (item.link) {
-        seen.add(item.link.trim());
+        seen.set(item.link.trim(), Date.now());
       }
     }
 
@@ -1909,6 +1957,8 @@ module.exports = {
   saveSeen,
   validateGeminiNews,
   fetchRssFeeds,
+  readResponseTextLimited,
+  resolveGoogleNewsLinks,
   assertSafeExternalUrl,
   isPrivateIp
 };
