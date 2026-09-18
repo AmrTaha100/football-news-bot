@@ -891,14 +891,17 @@ function getEventFingerprint(item) {
   if (teams.length >= 2 && score) {
     return {
       type: 'match-score',
-      key: 'match-score:' + teams.join('|') + ':' + [...score].sort((a, b) => a - b).join('-')
+      key: 'match-score:' + teams.join('|') + ':' + [...score].sort((a, b) => a - b).join('-'),
+      teams,
+      score: [...score].sort((a, b) => a - b)
     };
   }
 
   if (teams.length >= 2) {
     return {
       type: 'match',
-      key: 'match:' + teams.join('|')
+      key: 'match:' + teams.join('|'),
+      teams
     };
   }
 
@@ -1428,18 +1431,23 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
     const previousFingerprint = record.eventFingerprint || getEventFingerprint(previousItem);
 
     if (currentFingerprint && previousFingerprint) {
+      const currentTeams = new Set(currentFingerprint.teams || []);
+      const previousTeams = new Set(previousFingerprint.teams || []);
+      const sharedTeams = [...currentTeams].filter(team => previousTeams.has(team));
+
       if (
+        sharedTeams.length >= 2 &&
         currentFingerprint.type === 'match-score' &&
         previousFingerprint.type === 'match-score' &&
-        currentFingerprint.key === previousFingerprint.key
+        currentFingerprint.score?.join('-') === previousFingerprint.score?.join('-')
       ) {
         return true;
       }
 
       if (
+        sharedTeams.length >= 2 &&
         currentFingerprint.type === 'match' &&
         previousFingerprint.type === 'match' &&
-        currentFingerprint.key === previousFingerprint.key &&
         Math.abs(currentTime - seenAt) <= 18 * 60 * 60 * 1000
       ) {
         return true;
