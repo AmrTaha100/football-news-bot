@@ -267,6 +267,86 @@ async function assertSafeExternalUrl(rawUrl) {
   return url;
 }
 
+async function fetchRssFeeds(urls = RSS_URLS, loadFeed = async (url, index) => {
+  return withRetry(
+    async () => {
+      const response = await withTimeout(
+        fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; FootballNewsBot/1.0)'
+          }
+        }),
+        RSS_TIMEOUT_MS,
+        'RSS request'
+      );
+
+      if (!response.ok) {
+        throw new Error(`RSS HTTP ${response.status}`);
+      }
+
+      const xml = await response.text();
+      return parser.parseString(xml);
+    },
+    {
+      name: `RSS search ${index + 1}`,
+      attempts: 2,
+      baseDelay: 800
+    }
+  );
+}) {
+  const results = await Promise.all(
+    urls.map(async (url, index) => {
+      try {
+        const feed = await loadFeed(url, index);
+        const items = Array.isArray(feed?.items) ? feed.items : [];
+
+        console.log(`📰 RSS search ${index + 1}: ${items.length} items`);
+
+        return {
+          index,
+          items,
+          ok: true,
+          error: null
+        };
+      } catch (error) {
+        const message = getErrorText(error) || error?.name || 'unknown error';
+
+        console.error(
+          `⚠️ RSS search ${index + 1} failed: ${message}`
+        );
+
+        return {
+          index,
+          items: [],
+          ok: false,
+          error: message
+        };
+      }
+    })
+  );
+
+  const successful = results.filter(result => result.ok);
+  const failed = results.filter(result => !result.ok);
+
+  if (failed.length > 0) {
+    console.warn(
+      `⚠️ RSS health: ${successful.length}/${urls.length} feeds succeeded; ${failed.length} failed.`
+    );
+  }
+
+  if (successful.length === 0 && urls.length > 0) {
+    throw new Error(
+      `All ${urls.length} RSS feeds failed. Aborting run instead of treating RSS failure as "no news".`
+    );
+  }
+
+  return {
+    items: results.flatMap(result => result.items),
+    successfulCount: successful.length,
+    failedCount: failed.length
+  };
+}
+
 async function readResponseTextLimited(response, maxBytes) {
   const contentLength = Number(response.headers.get('content-length') || 0);
 
@@ -1326,55 +1406,13 @@ async function main() {
     This does NOT create extra Gemini requests.
   */
 
-  const feeds = await Promise.all(
-    RSS_URLS.map(async (url, index) => {
-      try {
-        const feed = await withRetry(
-          async () => {
-            const response = await withTimeout(
-              fetch(url, {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (compatible; FootballNewsBot/1.0)'
-                }
-              }),
-              RSS_TIMEOUT_MS,
-              'RSS request'
-            );
+  const rssResult = await fetchRssFeeds(RSS_URLS);
+  const allItems = rssResult.items;
 
-            if (!response.ok) {
-              throw new Error(`RSS HTTP ${response.status}`);
-            }
-
-            const xml = await response.text();
-            return parser.parseString(xml);
-          },
-          {
-            name: `RSS search ${index + 1}`,
-            attempts: 2,
-            baseDelay: 800
-          }
-        );
-
-        console.log(
-          `📰 RSS search ${index + 1}: ${feed.items.length} items`
-        );
-
-        return feed.items;
-      } catch (error) {
-        console.error(
-          `⚠️ RSS search ${index + 1} failed: ${error.message}`
-        );
-
-        return [];
-      }
-    })
+  console.log(
+    `📡 RSS health: ${rssResult.successfulCount}/${RSS_URLS.length} feeds succeeded`
   );
 
-  /*
-    Combine all RSS results
-  */
-
-  const allItems = feeds.flat();
 
   console.log(
     `📰 Total RSS items: ${allItems.length}`
@@ -1870,6 +1908,7 @@ module.exports = {
   loadSeen,
   saveSeen,
   validateGeminiNews,
+  fetchRssFeeds,
   assertSafeExternalUrl,
   isPrivateIp
 };
