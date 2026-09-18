@@ -1,5 +1,6 @@
 const Parser = require('rss-parser');
 const { GoogleGenAI } = require('@google/genai');
+const { GoogleDecoder } = require('google-news-url-decoder');
 const fs = require('fs');
 
 const parser = new Parser();
@@ -73,6 +74,8 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const ai = new GoogleGenAI({
   apiKey: GEMINI_API_KEY
 });
+
+const googleDecoder = new GoogleDecoder();
 
 /*
   =========================================================
@@ -199,6 +202,74 @@ function semanticDeduplicate(items) {
       return b.date - a.date;
     })[0]
   );
+}
+
+async function resolveGoogleNewsLinks(items) {
+  const googleItems = items.filter(item =>
+    typeof item.googleLink === 'string' &&
+    item.googleLink.includes('news.google.com/rss/articles/')
+  );
+
+  if (googleItems.length === 0) {
+    return items;
+  }
+
+  console.log(
+    `🔗 Resolving ${googleItems.length} Google News links...`
+  );
+
+  try {
+    const results = await googleDecoder.decodeBatch(
+      googleItems.map(item => item.googleLink)
+    );
+
+    const resolvedByGoogleLink = new Map();
+
+    results.forEach((result, index) => {
+      const googleLink = googleItems[index].googleLink;
+
+      if (
+        result &&
+        result.status &&
+        typeof result.decoded_url === 'string' &&
+        /^https?:\\/\\//i.test(result.decoded_url)
+      ) {
+        resolvedByGoogleLink.set(
+          googleLink,
+          result.decoded_url
+        );
+      }
+    });
+
+    let resolvedCount = 0;
+
+    const resolvedItems = items.map(item => {
+      const resolvedUrl = resolvedByGoogleLink.get(item.googleLink);
+
+      if (resolvedUrl) {
+        resolvedCount++;
+
+        return {
+          ...item,
+          link: resolvedUrl
+        };
+      }
+
+      return item;
+    });
+
+    console.log(
+      `🔗 Resolved ${resolvedCount}/${googleItems.length} Google News links`
+    );
+
+    return resolvedItems;
+  } catch (error) {
+    console.warn(
+      `⚠️ Google News URL resolution failed: ${error.message}`
+    );
+
+    return items;
+  }
 }
 
 function calculateNewsScore(item) {
@@ -657,6 +728,7 @@ async function main() {
         ).slice(0, 500),
 
         link: item.link,
+        googleLink: item.link,
 
         date
       };
@@ -715,13 +787,16 @@ async function main() {
     })
     .slice(0, MAX_NEWS);
 
+  const resolvedCandidates =
+    await resolveGoogleNewsLinks(selectedCandidates);
+
   console.log(
-    `✅ Found ${selectedCandidates.length} unique stories for Gemini (top ${MAX_NEWS})`
+    `✅ Found ${resolvedCandidates.length} unique stories for Gemini (top ${MAX_NEWS})`
   );
 
   console.log('📊 SNR Scores:');
 
-  for (const item of selectedCandidates) {
+  for (const item of resolvedCandidates) {
     console.log(
       `   ${calculateNewsScore(item)} → ${item.title}`
     );
@@ -734,6 +809,9 @@ async function main() {
     console.log(`Title: ${item.title}`);
     console.log(`Description: ${item.description || '(empty)'}`);
     console.log(`Link: ${item.link}`);
+    if (item.googleLink && item.googleLink !== item.link) {
+      console.log(`Google Link: ${item.googleLink}`);
+    }
   });
   /*
     No new news
@@ -753,7 +831,7 @@ async function main() {
     =========================================================
   */
 
-  const newsText = selectedCandidates
+  const newsText = resolvedCandidates
     .map(
       (item, index) => `
 ${index + 1}. ${item.title}
@@ -819,7 +897,7 @@ ${item.link}
     {
       "title": "عنوان عربي مختصر",
       "summary": "ملخص واضح من سطر أو سطرين",
-      "link": "الرابط الأصلي كما ورد في البيانات"
+      "link": "الرابط الأصلي للخبر كما ورد في البيانات، وليس رابط Google News إذا كان الرابط الأصلي متاحًا"
     }
   ]
 }
@@ -937,9 +1015,9 @@ ${newsText}
     selectedNews.map(item => item.link.trim())
   );
 
-  for (const item of selectedCandidates) {
+  for (const item of resolvedCandidates) {
     if (selectedLinks.has(item.link.trim())) {
-      seen.add(item.link);
+      seen.add(item.googleLink || item.link);
     }
   }
 
