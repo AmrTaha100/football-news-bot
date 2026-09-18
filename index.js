@@ -87,6 +87,120 @@ function cleanText(text = '') {
     .trim();
 }
 
+function normalizeArabic(text = '') {
+  return text
+    .toLowerCase()
+    .replace(/[إأآا]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/[ًٌٍَُِّْـ]/g, '')
+    .replace(/[^\u0600-\u06FF\u0030-\u0039a-z\s]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getNewsTokens(item) {
+  const stopWords = new Set([
+    'في', 'من', 'عن', 'على', 'الى', 'إلى', 'مع', 'بعد', 'قبل',
+    'هذا', 'هذه', 'ذلك', 'تلك', 'الذي', 'التي', 'هو', 'هي',
+    'ما', 'ماذا', 'هل', 'كيف', 'لماذا', 'تم', 'قد', 'كان',
+    'كانت', 'يكون', 'يتم', 'أمام', 'خلال', 'ضمن', 'حول',
+    'اليوم', 'غدا', 'أمس', 'اخبار', 'أخبار', 'كرة', 'قدم'
+  ]);
+
+  return new Set(
+    normalizeArabic(`${item.title} ${item.description}`)
+      .split(' ')
+      .filter(token => token.length >= 3 && !stopWords.has(token))
+  );
+}
+
+function jaccardSimilarity(setA, setB) {
+  if (setA.size === 0 || setB.size === 0) {
+    return 0;
+  }
+
+  let intersection = 0;
+
+  for (const token of setA) {
+    if (setB.has(token)) {
+      intersection++;
+    }
+  }
+
+  const union = new Set([...setA, ...setB]).size;
+
+  return union === 0 ? 0 : intersection / union;
+}
+
+function titleSimilarity(titleA, titleB) {
+  const tokensA = new Set(
+    normalizeArabic(titleA)
+      .split(' ')
+      .filter(token => token.length >= 3)
+  );
+
+  const tokensB = new Set(
+    normalizeArabic(titleB)
+      .split(' ')
+      .filter(token => token.length >= 3)
+  );
+
+  return jaccardSimilarity(tokensA, tokensB);
+}
+
+function areSemanticallyDuplicate(itemA, itemB) {
+  const titleScore = titleSimilarity(itemA.title, itemB.title);
+  const contentScore = jaccardSimilarity(
+    getNewsTokens(itemA),
+    getNewsTokens(itemB)
+  );
+
+  if (titleScore >= 0.65) {
+    return true;
+  }
+
+  if (contentScore >= 0.72) {
+    return true;
+  }
+
+  return false;
+}
+
+function semanticDeduplicate(items) {
+  const groups = [];
+
+  for (const item of items) {
+    let matchedGroup = null;
+
+    for (const group of groups) {
+      if (areSemanticallyDuplicate(item, group[0])) {
+        matchedGroup = group;
+        break;
+      }
+    }
+
+    if (matchedGroup) {
+      matchedGroup.push(item);
+    } else {
+      groups.push([item]);
+    }
+  }
+
+  return groups.map(group =>
+    group.sort((a, b) => {
+      const scoreDifference =
+        calculateNewsScore(b) - calculateNewsScore(a);
+
+      if (scoreDifference !== 0) {
+        return scoreDifference;
+      }
+
+      return b.date - a.date;
+    })[0]
+  );
+}
+
 function calculateNewsScore(item) {
   const text = `${item.title} ${item.description}`.toLowerCase();
 
@@ -588,23 +702,43 @@ async function main() {
 })
 .slice(0, MAX_NEWS);
 
+  const beforeSemanticDedup = freshNews.length;
+
+  const deduplicatedNews = semanticDeduplicate(freshNews);
+
   console.log(
-    `✅ Found ${freshNews.length} new unique news`
+    `🧠 Semantic dedup: ${beforeSemanticDedup} → ${deduplicatedNews.length} unique stories`
+  );
+
+  const selectedCandidates = deduplicatedNews
+    .sort((a, b) => {
+      const scoreDifference =
+        calculateNewsScore(b) - calculateNewsScore(a);
+
+      if (scoreDifference !== 0) {
+        return scoreDifference;
+      }
+
+      return b.date - a.date;
+    })
+    .slice(0, MAX_NEWS);
+
+  console.log(
+    `✅ Found ${selectedCandidates.length} unique stories for Gemini`
   );
 
   console.log('📊 SNR Scores:');
 
-for (const item of freshNews) {
-  console.log(
-    `   ${calculateNewsScore(item)} → ${item.title}`
-  );
-}
-
+  for (const item of selectedCandidates) {
+    console.log(
+      `   ${calculateNewsScore(item)} → ${item.title}`
+    );
+  }
   /*
     No new news
   */
 
-  if (freshNews.length === 0) {
+  if (selectedCandidates.length === 0) {
     console.log(
       'ℹ️ No new news. Nothing to send.'
     );
@@ -618,7 +752,7 @@ for (const item of freshNews) {
     =========================================================
   */
 
-  const newsText = freshNews
+  const newsText = selectedCandidates
     .map(
       (item, index) => `
 ${index + 1}. ${item.title}
@@ -802,7 +936,7 @@ ${newsText}
     selectedNews.map(item => item.link.trim())
   );
 
-  for (const item of freshNews) {
+  for (const item of selectedCandidates) {
     if (selectedLinks.has(item.link.trim())) {
       seen.add(item.link);
     }
