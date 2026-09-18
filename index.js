@@ -4,19 +4,57 @@ const fs = require('fs');
 
 const parser = new Parser();
 
-const RSS_URL =
-  'https://news.google.com/rss/search?q=%28%D9%83%D8%B1%D8%A9+%D8%A7%D9%84%D9%82%D8%AF%D9%85+OR+%D8%A7%D9%86%D8%AA%D9%82%D8%A7%D9%84%D8%A7%D8%AA+OR+%D8%AF%D9%88%D8%B1%D9%8A+%D8%A3%D8%A8%D8%B7%D8%A7%D9%84+%D8%A3%D9%88%D8%B1%D9%88%D8%A8%D8%A7+OR+%D8%A7%D9%84%D8%AF%D9%88%D8%B1%D9%8A+%D8%A7%D9%84%D8%A5%D9%86%D8%AC%D9%84%D9%8A%D8%B2%D9%8A+OR+%D8%A7%D9%84%D8%AF%D9%88%D8%B1%D9%8A+%D8%A7%D9%84%D8%A5%D8%B3%D8%A8%D8%A7%D9%86%D9%8A+OR+%D8%A7%D9%84%D8%A3%D9%87%D9%84%D9%8A+OR+%D8%A7%D9%84%D8%B2%D9%85%D8%A7%D9%84%D9%83+OR+%D9%85%D9%86%D8%AA%D8%AE%D8%A8+%D9%85%D8%B5%D8%B1+OR+%D9%85%D8%AD%D9%85%D8%AF+%D8%B5%D9%84%D8%A7%D8%AD+OR+%D9%85%D8%A8%D8%A7%D8%A8%D9%8A+OR+%D9%84%D9%8A%D9%81%D8%B1%D8%A8%D9%88%D9%84+OR+%D8%B1%D9%8A%D8%A7%D9%84+%D9%85%D8%AF%D8%B1%D9%8A%D8%AF+OR+%D8%A8%D8%B1%D8%B4%D9%84%D9%88%D9%86%D8%A9%29&hl=ar&gl=EG&ceid=EG:ar';
+/*
+  =========================================================
+  RSS SEARCHES
+  =========================================================
+*/
+
+const RSS_QUERIES = [
+  'كرة القدم أخبار مهمة',
+  'انتقالات كرة القدم',
+  'دوري أبطال أوروبا',
+  'الدوري الإنجليزي الممتاز',
+  'الدوري الإسباني',
+  'الأهلي الزمالك منتخب مصر محمد صلاح مبابي يامال هالاند'
+];
+
+const RSS_URLS = RSS_QUERIES.map(query =>
+  `https://news.google.com/rss/search?q=${encodeURIComponent(
+    query
+  )}&hl=ar&gl=EG&ceid=EG:ar`
+);
+
+/*
+  =========================================================
+  SETTINGS
+  =========================================================
+*/
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
-const MAX_NEWS = 10;
-const HOURS_BACK = 24;
+const MAX_NEWS = 15;
+const HOURS_BACK = 1;
+
+/*
+  =========================================================
+  ENVIRONMENT VARIABLES
+  =========================================================
+*/
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-const SEEN_FILE = './data/seen.json';
+/*
+  =========================================================
+  PERSISTENT STORAGE
+  Railway Volume is mounted at /app/data
+  =========================================================
+*/
+
+const DATA_DIR = '/app/data';
+const SEEN_FILE = `${DATA_DIR}/seen.json`;
 
 if (!GEMINI_API_KEY) {
   throw new Error('❌ GEMINI_API_KEY غير موجود');
@@ -30,9 +68,17 @@ if (!TELEGRAM_CHAT_ID) {
   throw new Error('❌ TELEGRAM_CHAT_ID غير موجود');
 }
 
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
 const ai = new GoogleGenAI({
   apiKey: GEMINI_API_KEY
 });
+
+/*
+  =========================================================
+  HELPERS
+  =========================================================
+*/
 
 function cleanText(text = '') {
   return text
@@ -84,7 +130,9 @@ function splitMessage(text, maxLength = 4000) {
       remaining.slice(0, cut).trim()
     );
 
-    remaining = remaining.slice(cut).trim();
+    remaining = remaining
+      .slice(cut)
+      .trim();
   }
 
   if (remaining) {
@@ -93,6 +141,12 @@ function splitMessage(text, maxLength = 4000) {
 
   return messages;
 }
+
+/*
+  =========================================================
+  TELEGRAM
+  =========================================================
+*/
 
 async function sendTelegram(text) {
   const url =
@@ -120,26 +174,70 @@ async function sendTelegram(text) {
   }
 }
 
+/*
+  =========================================================
+  MAIN
+  =========================================================
+*/
+
 async function main() {
   console.log('⚽ Football News Bot started');
 
-  // قراءة الأخبار
-  console.log('📡 Reading Google News RSS...');
-
-  const feed = await parser.parseURL(RSS_URL);
-
   console.log(
-    `📰 RSS returned ${feed.items.length} items`
+    `📡 Reading ${RSS_URLS.length} Google News RSS searches...`
   );
 
+  /*
+    Read all RSS searches in parallel.
+    This does NOT create extra Gemini requests.
+  */
+
+  const feeds = await Promise.all(
+    RSS_URLS.map(async (url, index) => {
+      try {
+        const feed = await parser.parseURL(url);
+
+        console.log(
+          `📰 RSS search ${index + 1}: ${feed.items.length} items`
+        );
+
+        return feed.items;
+      } catch (error) {
+        console.error(
+          `⚠️ RSS search ${index + 1} failed: ${error.message}`
+        );
+
+        return [];
+      }
+    })
+  );
+
+  /*
+    Combine all RSS results
+  */
+
+  const allItems = feeds.flat();
+
+  console.log(
+    `📰 Total RSS items: ${allItems.length}`
+  );
+
+  /*
+    =========================================================
+    FILTER + DEDUPLICATE
+    =========================================================
+  */
+
   const now = Date.now();
+
   const oneHourAgo =
     now - HOURS_BACK * 60 * 60 * 1000;
 
   const seen = loadSeen();
 
-  // فلترة الأخبار
-  const freshNews = feed.items
+  const uniqueLinks = new Set();
+
+  const freshNews = allItems
     .map(item => {
       const date = new Date(
         item.pubDate || item.isoDate
@@ -147,42 +245,75 @@ async function main() {
 
       return {
         title: cleanText(item.title),
+
         description: cleanText(
           item.contentSnippet ||
           item.content ||
           item.description ||
           ''
         ).slice(0, 500),
+
         link: item.link,
+
         date
       };
     })
+
     .filter(item => {
       const time = item.date.getTime();
 
-      return (
-        item.link &&
-        !seen.has(item.link) &&
-        time >= oneHourAgo &&
-        time <= now
-      );
+      if (!item.link) {
+        return false;
+      }
+
+      if (seen.has(item.link)) {
+        return false;
+      }
+
+      if (uniqueLinks.has(item.link)) {
+        return false;
+      }
+
+      if (
+        !Number.isFinite(time) ||
+        time < oneHourAgo ||
+        time > now
+      ) {
+        return false;
+      }
+
+      uniqueLinks.add(item.link);
+
+      return true;
     })
     .sort((a, b) => b.date - a.date)
     .slice(0, MAX_NEWS);
 
   console.log(
-    `✅ Found ${freshNews.length} new news`
+    `✅ Found ${freshNews.length} new unique news`
   );
 
+  /*
+    No new news
+  */
+
   if (freshNews.length === 0) {
-    console.log('ℹ️ No new news. Nothing to send.');
+    console.log(
+      'ℹ️ No new news. Nothing to send.'
+    );
+
     return;
   }
 
-  // تجهيز الأخبار لـ Gemini
+  /*
+    =========================================================
+    PREPARE NEWS FOR GEMINI
+    =========================================================
+  */
+
   const newsText = freshNews
-    .map((item, index) => {
-      return `
+    .map(
+      (item, index) => `
 ${index + 1}. ${item.title}
 
 الوصف:
@@ -190,12 +321,19 @@ ${item.description}
 
 الرابط:
 ${item.link}
-`;
-    })
+`
+    )
     .join('\n----------------\n');
 
-  // Gemini
-  console.log('🤖 Sending ONE request to Gemini...');
+  /*
+    =========================================================
+    ONE GEMINI REQUEST
+    =========================================================
+  */
+
+  console.log(
+    '🤖 Sending ONE request to Gemini...'
+  );
 
   const prompt = `
 أنت محرر أخبار كرة قدم لقناة Telegram مصرية.
@@ -235,6 +373,8 @@ ${item.link}
 - لا تجعل عدد الأخبار هدفًا بحد ذاته.
 - إذا كان هناك خبر واحد قوي فقط، اختره وحده.
 - إذا كان هناك خبران قويان، اختر الاثنين.
+- إذا كان هناك 3 أو 4 أخبار قوية، اخترهم.
+- لا تحاول الوصول إلى عدد معين من الأخبار.
 - إذا لم يوجد أي خبر يستحق النشر، أعد كلمة واحدة فقط:
 NO_NEWS
 
@@ -249,49 +389,88 @@ NO_NEWS
 لا تضف مقدمة أو خاتمة.
 لا تضف تحليلاً أو توقعات.
 لا تكرر نفس الخبر بصياغات مختلفة.
+لا تضع أي أخبار لم تكن موجودة في البيانات.
 
 الأخبار:
+
 ${newsText}
 `;
 
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt
-  });
+  const response =
+    await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt
+    });
 
   let result = response.text || '';
 
   if (!result.trim()) {
-    throw new Error('❌ Gemini returned an empty response');
+    throw new Error(
+      '❌ Gemini returned an empty response'
+    );
   }
 
-  console.log('✅ Gemini response received');
+  console.log(
+    '✅ Gemini response received'
+  );
 
-  // Markdown → Telegram HTML
+  /*
+    =========================================================
+    NO NEWS
+    =========================================================
+  */
+
+  if (
+    result.trim().toUpperCase() === 'NO_NEWS'
+  ) {
+    console.log(
+      'ℹ️ Gemini found no important news. Nothing to send.'
+    );
+
+    return;
+  }
+
+  /*
+    =========================================================
+    FORMAT FOR TELEGRAM
+    =========================================================
+  */
+
   result = result.replace(
     /\*\*(.*?)\*\*/g,
     '<b>$1</b>'
   );
 
-  // تحويل الرابط إلى "اقرأ الخبر"
   result = result.replace(
-  /(?:🔗\s*)?(https?:\/\/[^\s<]+)/g,
-  '<a href="$1">🔗 اقرأ الخبر</a>'
-);
+    /(?:🔗\s*)?(https?:\/\/[^\s<]+)/g,
+    '<a href="$1">🔗 اقرأ الخبر</a>'
+  );
 
-result = result.replace(
-  /(<a href="[^"]+">🔗 اقرأ الخبر<\/a>)(?=\s*$)/gm,
-  '$1'
-);
+  result = result.replace(
+    /[ \t]+\n/g,
+    '\n'
+  );
 
-  // تقسيم الرسالة
-  const messages = splitMessage(result);
+  result = result.replace(
+    /\n{3,}/g,
+    '\n\n'
+  );
+
+  result = result.trim();
+
+  /*
+    =========================================================
+    SPLIT TELEGRAM MESSAGE
+    =========================================================
+  */
+
+  const messages =
+    splitMessage(result);
 
   console.log(
     `📨 Sending ${messages.length} Telegram message(s)...`
   );
 
-  // Telegram
   for (const message of messages) {
     await sendTelegram(message);
 
@@ -302,19 +481,34 @@ result = result.replace(
     }
   }
 
-  // تسجيل الأخبار كمُرسلة
+  /*
+    =========================================================
+    SAVE SEEN NEWS
+    =========================================================
+  */
+
   for (const item of freshNews) {
     seen.add(item.link);
   }
 
   saveSeen(seen);
 
-  console.log('💾 Seen news saved');
+  console.log(
+    `💾 Seen news saved: ${seen.size} links`
+  );
+
   console.log('🎉 DONE!');
 }
+
+/*
+  =========================================================
+  ERROR HANDLING
+  =========================================================
+*/
 
 main().catch(error => {
   console.error('❌ ERROR:');
   console.error(error.message);
+
   process.exit(1);
 });
