@@ -16,7 +16,9 @@ const {
   loadSeen,
   saveSeen,
   validateGeminiNews,
-  fetchRssFeeds
+  fetchRssFeeds,
+  readResponseTextLimited,
+  resolveGoogleNewsLinks
 } = require('../index');
 
 const story = (title, description = '', date = new Date()) => ({ title, description, date });
@@ -54,7 +56,7 @@ test('seen persistence saves, reloads, and leaves no temp file', () => {
   saveSeen(seen);
   const file = path.join(process.env.DATA_DIR, 'seen.json');
   assert.equal(fs.existsSync(file), true);
-  assert.deepEqual([...loadSeen()].sort(), [...seen].sort());
+  assert.deepEqual([...loadSeen().keys()].sort(), [...seen].sort());
   assert.deepEqual(fs.readdirSync(process.env.DATA_DIR).filter(x => x.endsWith('.tmp')), []);
 });
 
@@ -154,4 +156,80 @@ test('RSS handling aborts when every feed fails instead of reporting no news', a
     ),
     /All 2 RSS feeds failed/
   );
+});
+
+
+test('seen retention removes entries older than 30 days and keeps recent entries', () => {
+  const file = path.join(process.env.DATA_DIR, 'seen.json');
+  const now = Date.now();
+  fs.writeFileSync(file, JSON.stringify([
+    { url: 'https://example.com/old', seenAt: now - 31 * 24 * 60 * 60 * 1000 },
+    { url: 'https://example.com/recent', seenAt: now - 29 * 24 * 60 * 60 * 1000 }
+  ]), 'utf8');
+
+  const seen = loadSeen();
+
+  assert.equal(seen.has('https://example.com/old'), false);
+  assert.equal(seen.has('https://example.com/recent'), true);
+});
+
+test('seen retention saves timestamps and prunes old entries', () => {
+  const old = Date.now() - 31 * 24 * 60 * 60 * 1000;
+  const recent = Date.now() - 2 * 24 * 60 * 60 * 1000;
+  const seen = new Map([
+    ['https://example.com/old', old],
+    ['https://example.com/recent', recent]
+  ]);
+
+  saveSeen(seen);
+
+  const saved = JSON.parse(
+    fs.readFileSync(path.join(process.env.DATA_DIR, 'seen.json'), 'utf8')
+  );
+
+  assert.deepEqual(saved.map(item => item.url), ['https://example.com/recent']);
+  assert.equal(typeof saved[0].seenAt, 'number');
+});
+
+test('RSS reader rejects responses larger than the configured limit', async () => {
+  const response = {
+    headers: new Headers({ 'content-length': String(1024 * 1024 + 1) }),
+    text: async () => 'x'
+  };
+
+  await assert.rejects(
+    () => readResponseTextLimited(response, 1024 * 1024),
+    /Response too large/
+  );
+});
+
+test('Google News decoder failure drops unresolved Google URL candidates', async () => {
+  const items = [
+    {
+      title: 'خبر يفشل فك رابطه',
+      description: 'وصف',
+      link: 'https://news.google.com/rss/articles/abc',
+      googleLink: 'https://news.google.com/rss/articles/abc'
+    },
+    {
+      title: 'خبر آخر',
+      description: 'وصف',
+      link: 'https://news.google.com/rss/articles/def',
+      googleLink: 'https://news.google.com/rss/articles/def'
+    }
+  ];
+
+  const result = await resolveGoogleNewsLinks(items, async url => {
+    if (url.endsWith('/abc')) {
+      throw new Error('decoder unavailable');
+    }
+
+    return {
+      status: true,
+      decoded_url: 'https://example.com/def'
+    };
+  });
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].link, 'https://example.com/def');
 });
