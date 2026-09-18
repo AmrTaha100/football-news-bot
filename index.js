@@ -845,6 +845,66 @@ function getEventTokens(item) {
   );
 }
 
+function extractMatchScore(text = '') {
+  const normalized = normalizeEventText(text);
+  const numericMatch = normalized.match(/(?:^|\\s)(\\d{1,2})\\s*[-:x]\\s*(\\d{1,2})(?:$|\\s)/);
+  if (numericMatch) return [Number(numericMatch[1]), Number(numericMatch[2])];
+
+  const arabicNumbers = {
+    'صفر': 0, 'هدف': 1, 'هدفين': 2, 'ثلاثه': 3, 'ثلاثية': 3, 'ثلاثيه': 3,
+    'اربعه': 4, 'اربعة': 4, 'خمسه': 5, 'خمسة': 5
+  };
+  const words = normalized.split(' ');
+  for (let i = 0; i < words.length - 2; i++) {
+    const left = arabicNumbers[words[i]];
+    const right = arabicNumbers[words[i + 2]];
+    if (Number.isInteger(left) && words[i + 1] === 'بهدف' && Number.isInteger(right)) {
+      return [left, right];
+    }
+  }
+  return null;
+}
+
+function getMatchTeamTokens(item) {
+  if (eventCategory(item.title + ' ' + item.description) !== 'match') return new Set();
+
+  const generic = new Set([
+    'فاز', 'فوز', 'يفوز', 'هزم', 'يهزم', 'هزيم', 'خسر', 'يخسر', 'خسار',
+    'تغلب', 'يتغلب', 'ينتصر', 'انتصار', 'سحق', 'يسحق', 'تعادل', 'تاهل',
+    'يتاهل', 'يتوج', 'توج', 'هدف', 'اهداف', 'ثلاثيه', 'ثلاثية', 'ثنائيه',
+    'ثنائية', 'بهدف', 'بهدفين', 'بثلاثه', 'بثلاثة', 'بنتيجة', 'مباراه',
+    'مباراة', 'الجوله', 'جوله', 'الدوري', 'الاسبان', 'الانجليزي',
+    'الايطالي', 'الالماني', 'الابطال', 'اوروبا', 'امم', 'افريقيا',
+    'ركله', 'ترجيح', 'نظيفه', 'نظيفة', 'امام', 'علي', 'على'
+  ]);
+
+  return new Set([...getEventTokens(item)].filter(token => !generic.has(token)));
+}
+
+function getEventFingerprint(item) {
+  const category = eventCategory(item.title + ' ' + item.description);
+  if (category !== 'match') return null;
+
+  const teams = [...getMatchTeamTokens(item)].sort();
+  const score = extractMatchScore(item.title + ' ' + item.description);
+
+  if (teams.length >= 2 && score) {
+    return {
+      type: 'match-score',
+      key: 'match-score:' + teams.join('|') + ':' + [...score].sort((a, b) => a - b).join('-')
+    };
+  }
+
+  if (teams.length >= 2) {
+    return {
+      type: 'match',
+      key: 'match:' + teams.join('|')
+    };
+  }
+
+  return null;
+}
+
 function eventCategory(text = '') {
   const normalized = normalizeArabic(text);
 
@@ -1296,7 +1356,10 @@ function saveSeen(seen) {
         normalized.set(url, {
           seenAt: Number(value.seenAt),
           title: typeof value.title === 'string' ? value.title : '',
-          description: typeof value.description === 'string' ? value.description : ''
+          description: typeof value.description === 'string' ? value.description : '',
+          ...(value.eventFingerprint && typeof value.eventFingerprint === 'object'
+            ? { eventFingerprint: value.eventFingerprint }
+            : {})
         });
       } else {
         normalized.set(url, {
@@ -1316,7 +1379,8 @@ function saveSeen(seen) {
       url,
       seenAt: record.seenAt,
       ...(record.title ? { title: record.title } : {}),
-      ...(record.description ? { description: record.description } : {})
+      ...(record.description ? { description: record.description } : {}),
+      ...(record.eventFingerprint ? { eventFingerprint: record.eventFingerprint } : {})
     }))
   );
 }
@@ -1325,10 +1389,12 @@ function markSeen(seen, item, seenAt = Date.now()) {
   const urls = [item.googleLink, item.link]
     .filter(url => typeof url === 'string' && url.trim());
 
+  const fingerprint = getEventFingerprint(item);
   const record = {
     seenAt,
     title: typeof item.title === 'string' ? item.title : '',
-    description: typeof item.description === 'string' ? item.description : ''
+    description: typeof item.description === 'string' ? item.description : '',
+    ...(fingerprint ? { eventFingerprint: fingerprint } : {})
   };
 
   for (const url of urls) {
@@ -1356,6 +1422,28 @@ function hasPublishedEvent(seen, item, now = Date.now()) {
 
     if (areNewsDuplicates(item, previousItem)) {
       return true;
+    }
+
+    const currentFingerprint = getEventFingerprint(item);
+    const previousFingerprint = record.eventFingerprint || getEventFingerprint(previousItem);
+
+    if (currentFingerprint && previousFingerprint) {
+      if (
+        currentFingerprint.type === 'match-score' &&
+        previousFingerprint.type === 'match-score' &&
+        currentFingerprint.key === previousFingerprint.key
+      ) {
+        return true;
+      }
+
+      if (
+        currentFingerprint.type === 'match' &&
+        previousFingerprint.type === 'match' &&
+        currentFingerprint.key === previousFingerprint.key &&
+        Math.abs(currentTime - seenAt) <= 18 * 60 * 60 * 1000
+      ) {
+        return true;
+      }
     }
 
     // Cross-source match reports can use very different verbs
@@ -2064,6 +2152,8 @@ module.exports = {
   resolveGoogleNewsLinks,
   hasPublishedEvent,
   markSeen,
+  extractMatchScore,
+  getEventFingerprint,
   assertSafeExternalUrl,
   isPrivateIp
 };
