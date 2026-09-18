@@ -20,7 +20,9 @@ const {
   readResponseTextLimited,
   resolveGoogleNewsLinks,
   hasPublishedEvent,
-  markSeen
+  markSeen,
+  extractMatchScore,
+  getEventFingerprint
 } = require('../index');
 
 const story = (title, description = '', date = new Date()) => ({ title, description, date });
@@ -314,4 +316,85 @@ test('published event dedup catches alternate match wording across sources', () 
   };
 
   assert.equal(hasPublishedEvent(seen, alternateSource), true);
+});
+
+
+test('match fingerprint dedup handles different wording with the same score', () => {
+  const a = story(
+    'برينتفورد يهزم تشيلسي 3-0',
+    'برينتفورد يفوز على تشيلسي بثلاثة أهداف'
+  );
+  const b = story(
+    'تشيلسي يسقط بثلاثية أمام برينتفورد',
+    'هزيمة تشيلسي أمام برينتفورد بنتيجة 0-3'
+  );
+
+  assert.deepEqual(extractMatchScore(a.title + ' ' + a.description), [3, 0]);
+  assert.deepEqual(extractMatchScore(b.title + ' ' + b.description), [0, 3]);
+  assert.equal(getEventFingerprint(a).type, 'match-score');
+  assert.equal(getEventFingerprint(b).type, 'match-score');
+  assert.equal(
+    hasPublishedEvent(
+      new Map([['https://site-a.example/match', {
+        seenAt: Date.parse('2026-09-19T00:00:00Z'),
+        title: a.title,
+        description: a.description,
+        eventFingerprint: getEventFingerprint(a)
+      }]]),
+      { ...b, date: new Date('2026-09-19T00:30:00Z') }
+    ),
+    true
+  );
+});
+
+test('match fingerprint does not merge the same teams when the score is different', () => {
+  const seen = new Map();
+  const oldMatch = story(
+    'برينتفورد يهزم تشيلسي 3-0',
+    'فوز برينتفورد على تشيلسي'
+  );
+  markSeen(seen, {
+    ...oldMatch,
+    link: 'https://site-a.example/match',
+    date: new Date('2026-09-19T00:00:00Z')
+  }, Date.parse('2026-09-19T00:00:00Z'));
+
+  const differentMatch = {
+    ...story(
+      'تشيلسي يهزم برينتفورد 2-1',
+      'تشيلسي يفوز على برينتفورد'
+    ),
+    date: new Date('2026-09-19T12:00:00Z')
+  };
+
+  assert.equal(hasPublishedEvent(seen, differentMatch), false);
+});
+
+test('match fingerprint uses a short fallback window when no score is available', () => {
+  const seen = new Map();
+  const oldMatch = story(
+    'برينتفورد يهزم تشيلسي',
+    'الفريق يحقق الفوز على تشيلسي'
+  );
+  markSeen(seen, {
+    ...oldMatch,
+    link: 'https://site-a.example/match',
+    date: new Date('2026-09-19T00:00:00Z')
+  }, Date.parse('2026-09-19T00:00:00Z'));
+
+  assert.equal(
+    hasPublishedEvent(seen, {
+      ...story('تشيلسي يسقط أمام برينتفورد', 'هزيمة أمام برينتفورد'),
+      date: new Date('2026-09-19T06:00:00Z')
+    }),
+    true
+  );
+
+  assert.equal(
+    hasPublishedEvent(seen, {
+      ...story('تشيلسي يسقط أمام برينتفورد', 'هزيمة أمام برينتفورد'),
+      date: new Date('2026-09-19T20:00:00Z')
+    }),
+    false
+  );
 });
