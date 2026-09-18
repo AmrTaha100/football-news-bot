@@ -1706,8 +1706,8 @@ ${newsText}
       .replace(/"/g, '&quot;');
 
   const formatNewsItem = item =>
-    `<b>⚽ ${escapeHtml(item.title)}</b>\\n\\n` +
-    `${escapeHtml(item.summary)}\\n\\n` +
+    `<b>⚽ ${escapeHtml(item.title)}</b>\n\n` +
+    `${escapeHtml(item.summary)}\n\n` +
     `<a href="${escapeHtml(item.link)}">🔗 اقرأ الخبر</a>`;
 
   const messageGroups = [];
@@ -1748,7 +1748,7 @@ ${newsText}
   for (const group of messageGroups) {
     const message = group
       .map(formatNewsItem)
-      .join('\\n\\n');
+      .join('\n\n');
 
     await sendTelegram(message);
 
