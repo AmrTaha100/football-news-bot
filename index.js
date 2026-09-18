@@ -54,6 +54,8 @@ const RSS_TIMEOUT_MS = 15000;
 const RSS_MAX_BYTES = 1024 * 1024;
 const SEEN_RETENTION_DAYS = 30;
 const SEEN_RETENTION_MS = SEEN_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const PUBLISHED_EVENT_DEDUP_HOURS = 72;
+const PUBLISHED_EVENT_DEDUP_MS = PUBLISHED_EVENT_DEDUP_HOURS * 60 * 60 * 1000;
 const MAX_RETRIES = 3;
 
 /*
@@ -872,6 +874,12 @@ function areEventDuplicates(itemA, itemB) {
     if (shared.length >= 4) {
       return true;
     }
+
+    // Different outlets often describe the same match with very
+    // different wording, leaving only the two team names in common.
+    if (categoryA === 'match' && shared.length >= 2) {
+      return true;
+    }
   }
 
   return false;
@@ -1208,7 +1216,8 @@ function calculateNewsScore(item) {
 function pruneSeen(seen, now = Date.now()) {
   const cutoff = now - SEEN_RETENTION_MS;
 
-  for (const [url, seenAt] of seen) {
+  for (const [url, record] of seen) {
+    const seenAt = Number(record?.seenAt);
     if (!Number.isFinite(seenAt) || seenAt < cutoff) {
       seen.delete(url);
     }
@@ -1233,7 +1242,7 @@ function loadSeen() {
     for (const item of data) {
       if (typeof item === 'string' && item.trim()) {
         // Backward compatibility with the old string-only format.
-        seen.set(item.trim(), now);
+        seen.set(item.trim(), { seenAt: now });
         continue;
       }
 
@@ -1244,7 +1253,11 @@ function loadSeen() {
         item.url.trim() &&
         Number.isFinite(Number(item.seenAt))
       ) {
-        seen.set(item.url.trim(), Number(item.seenAt));
+        seen.set(item.url.trim(), {
+          seenAt: Number(item.seenAt),
+          title: typeof item.title === 'string' ? item.title : '',
+          description: typeof item.description === 'string' ? item.description : ''
+        });
       }
     }
 
@@ -1265,16 +1278,77 @@ function loadSeen() {
 
 function saveSeen(seen) {
   const now = Date.now();
-  const normalized = seen instanceof Map
-    ? new Map(seen)
-    : new Map([...seen].map(url => [url, now]));
+  const normalized = new Map();
+
+  for (const [url, value] of seen) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      normalized.set(url, {
+        seenAt: Number(value.seenAt),
+        title: typeof value.title === 'string' ? value.title : '',
+        description: typeof value.description === 'string' ? value.description : ''
+      });
+    } else {
+      // Compatibility for callers that still provide a Set-like Map.
+      normalized.set(url, {
+        seenAt: Number(value) || now,
+        title: '',
+        description: ''
+      });
+    }
+  }
 
   pruneSeen(normalized, now);
 
   atomicWriteJson(
     SEEN_FILE,
-    [...normalized].map(([url, seenAt]) => ({ url, seenAt }))
+    [...normalized].map(([url, record]) => ({
+      url,
+      seenAt: record.seenAt,
+      ...(record.title ? { title: record.title } : {}),
+      ...(record.description ? { description: record.description } : {})
+    }))
   );
+}
+
+function markSeen(seen, item, seenAt = Date.now()) {
+  const urls = [item.googleLink, item.link]
+    .filter(url => typeof url === 'string' && url.trim());
+
+  const record = {
+    seenAt,
+    title: typeof item.title === 'string' ? item.title : '',
+    description: typeof item.description === 'string' ? item.description : ''
+  };
+
+  for (const url of urls) {
+    seen.set(url.trim(), { ...record });
+  }
+}
+
+function hasPublishedEvent(seen, item, now = Date.now()) {
+  const currentTime = item.date instanceof Date && Number.isFinite(item.date.getTime())
+    ? item.date.getTime()
+    : now;
+
+  for (const record of seen.values()) {
+    if (!record?.title) continue;
+
+    const seenAt = Number(record.seenAt);
+    if (!Number.isFinite(seenAt)) continue;
+    if (Math.abs(currentTime - seenAt) > PUBLISHED_EVENT_DEDUP_MS) continue;
+
+    const previousItem = {
+      title: record.title,
+      description: record.description || '',
+      date: new Date(seenAt)
+    };
+
+    if (areNewsDuplicates(item, previousItem)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function selectCandidates(items, limit = MAX_NEWS) {
@@ -1512,6 +1586,11 @@ async function main() {
       }
 
       if (seen.has(item.link)) {
+        return false;
+      }
+
+      if (hasPublishedEvent(seen, item, now)) {
+        console.log(`♻️ Skipping previously published event: ${item.title}`);
         return false;
       }
 
@@ -1886,13 +1965,7 @@ ${newsText}
     await sendTelegram(message);
 
     for (const item of group) {
-      if (item.googleLink) {
-        seen.set(item.googleLink.trim(), Date.now());
-      }
-
-      if (item.link) {
-        seen.set(item.link.trim(), Date.now());
-      }
+      markSeen(seen, item);
     }
 
     saveSeen(seen);
