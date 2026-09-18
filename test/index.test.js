@@ -92,3 +92,24 @@ test('Gemini validation accepts only candidate links and removes duplicates', ()
 test('Gemini validation rejects malformed top-level output', () => {
   assert.throws(() => validateGeminiNews({ news: 'not-an-array' }, []), /missing news array/);
 });
+
+
+test('SSRF guard blocks private IPv4 and IPv4-mapped IPv6 addresses', async () => {
+  const { assertSafeExternalUrl } = require('../index');
+  await assert.rejects(
+    () => assertSafeExternalUrl('http://127.0.0.1/'),
+    /Private IP blocked/
+  );
+  await assert.rejects(
+    () => assertSafeExternalUrl('http://[::ffff:127.0.0.1]/'),
+    /Private IP blocked/
+  );
+});
+
+test('SSRF guard blocks local hostnames before DNS resolution', async () => {
+  const { assertSafeExternalUrl } = require('../index');
+  await assert.rejects(
+    () => assertSafeExternalUrl('http://localhost/'),
+    /Private\/local hostname blocked/
+  );
+});
