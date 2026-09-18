@@ -272,6 +272,121 @@ async function resolveGoogleNewsLinks(items) {
   }
 }
 
+
+function normalizeEventText(text = '') {
+  let normalized = normalizeArabic(text);
+
+  const eventAliases = [
+    [/العوده|يعود|تعود|عاد|عادت/g, 'عود'],
+    [/تدريب|مدرب|مديره الفني|مدربه/g, 'تدريب'],
+    [/انتقال|ينتقل|انتقل|انتقلت|ينضم|انضم|انضمت/g, 'انتقال'],
+    [/توقيع|يوقع|وقع|وقعت|تجديد|يجدد|جدد|جددت/g, 'عقد'],
+    [/اهتمام|يرغب|يسعي|يسعى|مرشح/g, 'اهتمام'],
+    [/اصابه|اصيب|أصيب|يغيب|غياب/g, 'اصابه'],
+    [/اقاله|اقيل|إقاله|استقال|استقالت/g, 'اقاله']
+  ];
+
+  for (const [pattern, replacement] of eventAliases) {
+    normalized = normalized.replace(pattern, replacement);
+  }
+
+  return normalized
+    .replace(/\b(تقرير|مصدر|صحيفه|صحيفة|كشف|يكشف|تفاصيل|خاص|عاجل)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getEventTokens(item) {
+  return new Set(
+    normalizeEventText(item.title)
+      .split(' ')
+      .filter(token =>
+        token.length >= 3 &&
+        !new Set([
+          'في', 'من', 'عن', 'على', 'الى', 'مع', 'بعد', 'قبل',
+          'هذا', 'هذه', 'ذلك', 'تلك', 'الذي', 'التي', 'هو', 'هي',
+          'ما', 'ماذا', 'هل', 'كيف', 'لماذا', 'تم', 'قد', 'كان',
+          'كانت', 'يكون', 'يتم', 'امام', 'خلال', 'ضمن', 'حول',
+          'اليوم', 'غدا', 'امس', 'اخبار', 'كره', 'قدم',
+          'الدوري', 'الاسبان', 'الانجليزي', 'الايطالي', 'الالماني'
+        ]).has(token)
+      )
+  );
+}
+
+function eventCategory(text = '') {
+  const normalized = normalizeArabic(text);
+
+  if (/(عود|تدريب|مدرب)/.test(normalized)) return 'coach';
+  if (/(انتقال|ينضم|انضم|صفقه|يوقع|توقيع|تجديد|عقد)/.test(normalized)) return 'transfer';
+  if (/(اصابه|اصيب|يغيب|غياب)/.test(normalized)) return 'injury';
+  if (/(فاز|فوز|هزم|تاهل|يتاهل|يتوج|توج|هدف قاتل|ركله ترجيح)/.test(normalized)) return 'match';
+  if (/(اقاله|استقال|عقوبه|غرامه|ايقاف)/.test(normalized)) return 'discipline';
+
+  return 'general';
+}
+
+function areEventDuplicates(itemA, itemB) {
+  const eventA = getEventTokens(itemA);
+  const eventB = getEventTokens(itemB);
+
+  const shared = [...eventA].filter(token => eventB.has(token));
+  const overlap = jaccardSimilarity(eventA, eventB);
+  const categoryA = eventCategory(itemA.title + ' ' + itemA.description);
+  const categoryB = eventCategory(itemB.title + ' ' + itemB.description);
+
+  if (categoryA !== 'general' && categoryA === categoryB) {
+    if (shared.length >= 3 && overlap >= 0.35) {
+      return true;
+    }
+
+    if (shared.length >= 4) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function areNewsDuplicates(itemA, itemB) {
+  return areSemanticallyDuplicate(itemA, itemB) ||
+    areEventDuplicates(itemA, itemB);
+}
+
+function eventDeduplicate(items) {
+  const groups = [];
+
+  for (const item of items) {
+    let matchedGroup = null;
+
+    for (const group of groups) {
+      if (areNewsDuplicates(item, group[0])) {
+        matchedGroup = group;
+        break;
+      }
+    }
+
+    if (matchedGroup) {
+      matchedGroup.push(item);
+    } else {
+      groups.push([item]);
+    }
+  }
+
+  return groups.map(group =>
+    group.sort((a, b) => {
+      const scoreDifference =
+        calculateNewsScore(b) - calculateNewsScore(a);
+
+      if (scoreDifference !== 0) {
+        return scoreDifference;
+      }
+
+      return b.date - a.date;
+    })[0]
+  );
+}
+
 function calculateNewsScore(item) {
   const text = `${item.title} ${item.description}`.toLowerCase();
 
@@ -768,10 +883,17 @@ async function main() {
 
   const beforeSemanticDedup = freshNews.length;
 
-  const deduplicatedNews = semanticDeduplicate(freshNews);
+  const semanticNews = semanticDeduplicate(freshNews);
 
   console.log(
-    `🧠 Semantic dedup: ${beforeSemanticDedup} → ${deduplicatedNews.length} unique stories`
+    `🧠 Semantic dedup: ${beforeSemanticDedup} → ${semanticNews.length} unique stories`
+  );
+
+  const beforeEventDedup = semanticNews.length;
+  const deduplicatedNews = eventDeduplicate(semanticNews);
+
+  console.log(
+    `🧩 Event dedup: ${beforeEventDedup} → ${deduplicatedNews.length} unique stories`
   );
 
   const selectedCandidates = deduplicatedNews
@@ -952,11 +1074,17 @@ ${newsText}
     throw new Error('❌ Gemini JSON missing news array');
   }
 
-  const selectedNews = parsed.news.filter(item =>
+  const validSelectedNews = parsed.news.filter(item =>
     item &&
     typeof item.title === 'string' &&
     typeof item.summary === 'string' &&
     typeof item.link === 'string'
+  );
+
+  const selectedNews = eventDeduplicate(validSelectedNews);
+
+  console.log(
+    `🧩 Gemini event dedup: ${validSelectedNews.length} → ${selectedNews.length} news`
   );
 
   if (selectedNews.length === 0) {
