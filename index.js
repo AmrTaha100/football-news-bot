@@ -34,7 +34,7 @@ const RSS_URLS = RSS_QUERIES.map(query =>
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 const MAX_NEWS = 8;
-const HOURS_BACK = 1;
+const HOURS_BACK = 1.25;
 
 /*
   =========================================================
@@ -90,8 +90,6 @@ function cleanText(text = '') {
 function calculateNewsScore(item) {
   const text = `${item.title} ${item.description}`.toLowerCase();
 
-  let score = 0;
-
   const hasAny = words =>
     words.some(word => text.includes(word.toLowerCase()));
 
@@ -100,13 +98,16 @@ function calculateNewsScore(item) {
 
   /*
     =========================================================
-    SNR 2.0
-    Score the importance of the EVENT first, then add context
-    about people, clubs and competitions.
+    SNR 2.1
+    Event importance is the main score.
+    Context (player/club/competition) is a limited bonus so
+    a famous name cannot make an otherwise weak story important.
     =========================================================
   */
 
-  // 🚨 أخبار رسمية أو قرارات قوية
+  let eventScore = 0;
+
+  // 🚨 أخبار رسمية / قرارات قوية
   if (hasAny([
     'رسميًا',
     'رسميا',
@@ -116,7 +117,7 @@ function calculateNewsScore(item) {
     'أعلن الاتحاد',
     'تم الإعلان'
   ])) {
-    score += 25;
+    eventScore += 24;
   }
 
   if (hasAny([
@@ -130,10 +131,10 @@ function calculateNewsScore(item) {
     'تعيين مدرب',
     'تعيين المدير'
   ])) {
-    score += 20;
+    eventScore += 20;
   }
 
-  // 🔄 انتقالات وصفقات: نفهم أنماط الخبر بدل الاعتماد على كلمة واحدة
+  // 🔄 انتقالات مؤكدة أو تطورات قوية
   if (hasAny([
     'انتقال',
     'صفقة',
@@ -155,10 +156,10 @@ function calculateNewsScore(item) {
     'تجديد عقد',
     'تمديد عقد'
   ])) {
-    score += 18;
+    eventScore += 18;
   }
 
-  // انتقالات محتملة/شائعات: مهمة لكن أقل من الخبر المؤكد
+  // انتقالات محتملة / اهتمام: أقل من الخبر المؤكد
   if (hasAny([
     'اهتمام بـ',
     'اهتمام باللاعب',
@@ -171,7 +172,7 @@ function calculateNewsScore(item) {
     'قد يرحل',
     'يقترب من الرحيل'
   ])) {
-    score += 9;
+    eventScore += 9;
   }
 
   // 🏥 إصابات وغيابات
@@ -179,7 +180,6 @@ function calculateNewsScore(item) {
     'إصابة',
     'أصيب',
     'تعرض للإصابة',
-    'تعرض لـإصابة',
     'يغيب بسبب',
     'سيغيب',
     'لن يشارك',
@@ -187,10 +187,10 @@ function calculateNewsScore(item) {
     'غيابه عن المباراة',
     'خضع لفحوصات'
   ])) {
-    score += 17;
+    eventScore += 17;
   }
 
-  // 🏟️ نتائج وأحداث حاسمة في المباريات
+  // 🏟️ نتائج وأحداث حاسمة
   if (hasAny([
     'فاز على',
     'فوز على',
@@ -207,10 +207,10 @@ function calculateNewsScore(item) {
     'الهدف القاتل',
     'ركلة ترجيح'
   ])) {
-    score += 14;
+    eventScore += 14;
   }
 
-  // ⚖️ قرارات وانضباط
+  // ⚖️ عقوبات وقرارات انضباطية
   if (hasAny([
     'إيقاف',
     'عقوبة',
@@ -220,10 +220,10 @@ function calculateNewsScore(item) {
     'تأجيل المباراة',
     'إلغاء المباراة'
   ])) {
-    score += 13;
+    eventScore += 13;
   }
 
-  // 🗣️ تصريحات قوية أو تطورات داخلية
+  // 🗣️ التصريحات: تأثير محدود
   if (hasAny([
     'يعلن',
     'أعلن',
@@ -236,25 +236,30 @@ function calculateNewsScore(item) {
     'هاجم',
     'يرد على'
   ])) {
-    score += 6;
+    eventScore += 5;
   }
 
-  // 🏆 البطولات الكبرى
+  // 🏆 سياق البطولة: bonus محدود
+  let contextScore = 0;
+
   if (hasAny([
     'دوري أبطال أوروبا',
     'دوري الأبطال',
     'champions league',
     'كأس العالم',
-    'كأس أمم أفريقيا',
+    'كأس أمم أفريقيا'
+  ])) {
+    contextScore += 7;
+  } else if (hasAny([
     'الدوري الإنجليزي',
     'الدوري الإسباني',
     'الدوري الإيطالي',
     'الدوري الألماني'
   ])) {
-    score += 9;
+    contextScore += 5;
   }
 
-  // ⭐ نجوم كبار: بونص محدود حتى لا يتحول كل خبر عن لاعب مشهور
+  // ⭐ نجوم كبار: بونص محدود
   const majorPlayers = [
     'محمد صلاح',
     'مبابي',
@@ -266,9 +271,9 @@ function calculateNewsScore(item) {
     'ميسي'
   ];
 
-  score += Math.min(countMatches(majorPlayers), 2) * 7;
+  contextScore += Math.min(countMatches(majorPlayers), 2) * 5;
 
-  // 🏟️ أندية ومنتخبات ذات اهتمام مرتفع لدى الجمهور المصري
+  // 🏟️ أندية كبيرة: بونص محدود
   const majorClubs = [
     'الأهلي',
     'الزمالك',
@@ -283,26 +288,27 @@ function calculateNewsScore(item) {
     'باريس سان جيرمان'
   ];
 
-  score += Math.min(countMatches(majorClubs), 2) * 5;
+  contextScore += Math.min(countMatches(majorClubs), 2) * 4;
 
   if (hasAny([
     'منتخب مصر',
     'المنتخب المصري',
     'الفراعنة'
   ])) {
-    score += 8;
-  }
-
-  // 🇪🇬 كرة القدم المصرية
-  if (hasAny([
+    contextScore += 6;
+  } else if (hasAny([
     'الدوري المصري',
     'كأس مصر',
     'السوبر المصري'
   ])) {
-    score += 5;
+    contextScore += 4;
   }
 
-  // ⏱️ الأفضلية للخبر الأحدث داخل نفس مستوى الأهمية
+  contextScore = Math.min(contextScore, 18);
+
+  // ⏱️ حداثة بسيطة حتى لا تتغلب على أهمية الحدث
+  let freshnessScore = 0;
+
   if (item.date instanceof Date && Number.isFinite(item.date.getTime())) {
     const ageMinutes = Math.max(
       0,
@@ -310,15 +316,17 @@ function calculateNewsScore(item) {
     );
 
     if (ageMinutes <= 15) {
-      score += 6;
+      freshnessScore = 4;
     } else if (ageMinutes <= 30) {
-      score += 4;
+      freshnessScore = 3;
     } else if (ageMinutes <= 60) {
-      score += 2;
+      freshnessScore = 1;
     }
   }
 
-  // 🗑️ أخبار تجارية بحتة
+  // 🗑️ خصومات للأخبار غير المناسبة
+  let penalty = 0;
+
   if (hasAny([
     'شركة ملابس',
     'راعٍ',
@@ -329,10 +337,9 @@ function calculateNewsScore(item) {
     'حملة إعلانية',
     'إطلاق حذاء'
   ])) {
-    score -= 25;
+    penalty -= 25;
   }
 
-  // 🗑️ أخبار منخفضة الأولوية
   if (hasAny([
     'فريق الشباب',
     'كرة الصالات',
@@ -342,24 +349,21 @@ function calculateNewsScore(item) {
     'تشكيل الفريق',
     'جلسة تصوير'
   ])) {
-    score -= 12;
+    penalty -= 12;
   }
 
-  // 🗑️ Clickbait / محتوى بلا معلومة واضحة
   if (hasAny([
     'لن تصدق',
     'صدمة مدوية',
     'مفاجأة مدوية',
     'شاهد ماذا حدث',
-    'السر وراء',
     'الحقيقة الكاملة',
     'كواليس مثيرة',
     'تفاصيل لا تصدق'
   ])) {
-    score -= 10;
+    penalty -= 10;
   }
 
-  // الرأي العام أو التحليل وحده أقل أولوية من الخبر الفعلي
   if (hasAny([
     'تحليل',
     'رأي',
@@ -367,10 +371,10 @@ function calculateNewsScore(item) {
     'من الأفضل',
     'هل يستحق'
   ])) {
-    score -= 5;
+    penalty -= 5;
   }
 
-  return score;
+  return eventScore + contextScore + freshnessScore + penalty;
 }
 function loadSeen() {
   try {
@@ -790,8 +794,18 @@ ${newsText}
     =========================================================
   */
 
+  const selectedLinks = new Set();
+
+  for (const match of result.matchAll(/https?:\\/\\/[^\\s<)]+/g)) {
+    selectedLinks.add(
+      match[0].replace(/[),.]+$/, '')
+    );
+  }
+
   for (const item of freshNews) {
-    seen.add(item.link);
+    if (selectedLinks.has(item.link)) {
+      seen.add(item.link);
+    }
   }
 
   saveSeen(seen);
