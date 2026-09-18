@@ -308,58 +308,48 @@ async function resolveGoogleNewsLinks(items) {
     `🔗 Resolving ${googleItems.length} Google News links...`
   );
 
-  try {
-    const results = await googleDecoder.decodeBatch(
-      googleItems.map(item => item.googleLink)
-    );
+  let resolvedCount = 0;
 
-    const resolvedByGoogleLink = new Map();
-
-    results.forEach((result, index) => {
-      const googleLink = googleItems[index].googleLink;
-
+  const resolvedItems = await Promise.all(
+    items.map(async item => {
       if (
-        result &&
-        result.status &&
-        typeof result.decoded_url === 'string' &&
-        /^https?:\/\//i.test(result.decoded_url)
+        typeof item.googleLink !== 'string' ||
+        !item.googleLink.includes('news.google.com/rss/articles/')
       ) {
-        resolvedByGoogleLink.set(
-          googleLink,
-          result.decoded_url
-        );
+        return item;
       }
-    });
 
-    let resolvedCount = 0;
+      try {
+        const result = await googleDecoder.decode(item.googleLink);
 
-    const resolvedItems = items.map(item => {
-      const resolvedUrl = resolvedByGoogleLink.get(item.googleLink);
+        if (
+          result &&
+          result.status &&
+          typeof result.decoded_url === 'string' &&
+          /^https?:\/\//i.test(result.decoded_url)
+        ) {
+          resolvedCount++;
 
-      if (resolvedUrl) {
-        resolvedCount++;
-
-        return {
-          ...item,
-          link: resolvedUrl
-        };
+          return {
+            ...item,
+            link: result.decoded_url
+          };
+        }
+      } catch (error) {
+        console.warn(
+          `⚠️ Google News URL resolution failed: ${item.title}`
+        );
       }
 
       return item;
-    });
+    })
+  );
 
-    console.log(
-      `🔗 Resolved ${resolvedCount}/${googleItems.length} Google News links`
-    );
+  console.log(
+    `🔗 Resolved ${resolvedCount}/${googleItems.length} Google News links`
+  );
 
-    return resolvedItems;
-  } catch (error) {
-    console.warn(
-      `⚠️ Google News URL resolution failed: ${error.message}`
-    );
-
-    return items;
-  }
+  return resolvedItems;
 }
 
 
@@ -1022,7 +1012,7 @@ async function main() {
   resolvedCandidates.forEach((item, index) => {
     console.log(`--- Candidate ${index + 1} ---`);
     console.log(`Title: ${item.title}`);
-    console.log(`Description: ${item.description || '(empty)'}`);
+    console.log(`Description: ${(item.description || '(empty)').slice(0, 500)}`);
     console.log(`Link: ${item.link}`);
     if (item.googleLink && item.googleLink !== item.link) {
       console.log(`Google Link: ${item.googleLink}`);
@@ -1266,7 +1256,10 @@ ${newsText}
 
 main().catch(error => {
   console.error('❌ ERROR:');
-  console.error(error.message);
+  console.error('Name:', error?.name || 'Unknown');
+  console.error('Message:', error?.message || '(empty)');
+  console.error('Cause:', error?.cause || '(none)');
+  console.error('Details:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
 
   process.exit(1);
 });
