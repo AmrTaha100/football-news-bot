@@ -204,6 +204,96 @@ function semanticDeduplicate(items) {
   );
 }
 
+async function fetchArticleContent(items) {
+  console.log(`📄 Fetching article content for ${items.length} candidates...`);
+
+  const results = await Promise.all(
+    items.map(async item => {
+      if (!item.link || !/^https?:\\/\\//i.test(item.link)) {
+        return item;
+      }
+
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+
+        const response = await fetch(item.link, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; FootballNewsBot/1.0)'
+          },
+          signal: controller.signal
+        });
+
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          return item;
+        }
+
+        const html = await response.text();
+
+        const metaDescription =
+          html.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:description|og:description)["']/i)?.[1] ||
+          '';
+
+        const articleMatch =
+          html.match(/<article[^>]*>([\\s\\S]*?)<\\/article>/i)?.[1] ||
+          '';
+
+        const articleText = cleanText(
+          articleMatch
+            .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
+            .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
+        );
+
+        const descriptionText = cleanText(
+          metaDescription
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&amp;/g, '&')
+        );
+
+        const extracted = [
+          descriptionText,
+          articleText
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\\s+/g, ' ')
+          .trim()
+          .slice(0, 3000);
+
+        if (!extracted) {
+          return item;
+        }
+
+        console.log(`   📄 Content extracted: ${item.title}`);
+
+        return {
+          ...item,
+          description: extracted
+        };
+      } catch (error) {
+        console.log(`   ⚠️ Content fetch failed: ${item.title}`);
+        return item;
+      }
+    })
+  );
+
+  const extractedCount = results.filter(
+    (item, index) =>
+      item.description &&
+      item.description !== items[index].description
+  ).length;
+
+  console.log(
+    `📄 Extracted content for ${extractedCount}/${items.length} candidates`
+  );
+
+  return results;
+}
+
 async function resolveGoogleNewsLinks(items) {
   const googleItems = items.filter(item =>
     typeof item.googleLink === 'string' &&
@@ -912,8 +1002,11 @@ async function main() {
   const resolvedCandidates =
     await resolveGoogleNewsLinks(selectedCandidates);
 
+  const enrichedCandidates =
+    await fetchArticleContent(resolvedCandidates);
+
   console.log(
-    `✅ Found ${resolvedCandidates.length} unique stories for Gemini (top ${MAX_NEWS})`
+    `✅ Found ${enrichedCandidates.length} unique stories for Gemini (top ${MAX_NEWS})`
   );
 
   console.log('📊 SNR Scores:');
@@ -953,7 +1046,7 @@ async function main() {
     =========================================================
   */
 
-  const newsText = resolvedCandidates
+  const newsText = enrichedCandidates
     .map(
       (item, index) => `
 ${index + 1}. ${item.title}
