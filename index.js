@@ -694,22 +694,23 @@ ${item.link}
 ${newsText}
 `;
 
-  /*  /*
-    =========================================================
-    NO NEWS
-    =========================================================
-  */
+  const response =
+    await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt
+    });
 
-  if (
-    result.trim().toUpperCase() === 'NO_NEWS'
-  ) {
-    console.log(
-      'ℹ️ Gemini found no important news. Nothing to send.'
+  let result = response.text || '';
+
+  if (!result.trim()) {
+    throw new Error(
+      '❌ Gemini returned an empty response'
     );
-
-    return;
   }
 
+  console.log(
+    '✅ Gemini response received'
+  );
   /*
     =========================================================
     PARSE STRUCTURED GEMINI RESPONSE
@@ -722,9 +723,9 @@ ${newsText}
     let jsonText = result.trim();
 
     jsonText = jsonText
-      .replace(/^\\`\\`\\`json\\s*/i, '')
-      .replace(/^\\`\\`\\`\\s*/i, '')
-      .replace(/\\s*\\`\\`\\`$/i, '')
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
       .trim();
 
     parsed = JSON.parse(jsonText);
@@ -760,11 +761,11 @@ ${newsText}
 
   result = selectedNews
     .map(item =>
-      `<b>⚽ ${item.title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>\\n\\n` +
-      `${item.summary.replace(/</g, '&lt;').replace(/>/g, '&gt;')}\\n\\n` +
+      `<b>⚽ ${item.title.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>\n\n` +
+      `${item.summary.replace(/</g, '&lt;').replace(/>/g, '&gt;')}\n\n` +
       `<a href="${item.link.replace(/"/g, '&quot;')}">🔗 اقرأ الخبر</a>`
     )
-    .join('\\n\\n');
+    .join('\n\n');
 
   result = result.trim();
 
