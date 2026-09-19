@@ -37,6 +37,7 @@ const RSS_URLS = RSS_QUERIES.map(query =>
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 const MAX_NEWS = 15;
+const TARGET_NEWS = 3;
 const CANDIDATE_POOL_SIZE = 25;
 const SNR_PRIMARY_COUNT = 10;
 const HOURS_BACK = 1.25;
@@ -2080,9 +2081,12 @@ ${item.link}
   );
 
   const prompt = `
-أنت محرر أخبار كرة قدم مسؤول عن اختيار الأخبار التي تستحق النشر في قناة Telegram مصرية.
+أنت محرر أخبار كرة قدم مسؤول عن تجهيز 3 أخبار للنشر كل ساعة في قناة Telegram مصرية.
 
-مهمتك ليست تلخيص كل الأخبار، بل انتقاء الأخبار المهمة فقط. اعتبر نفسك بوابة تحريرية صارمة.
+مهمتك اختيار وترتيب أفضل الأخبار المتاحة، وليس الاكتفاء بخبر واحد فقط.
+يجب أن تعيد 3 أخبار بالضبط إذا كانت هناك 3 أخبار صالحة على الأقل في البيانات.
+الأولوية تكون للأخبار المهمة، لكن إذا كان هناك خبر مهم واحد فقط، أكمل العدد بخبرين أقل أهمية ما داما خبرين حقيقيين وجديدين ومفيدين للقارئ.
+لا تعِد أقل من 3 أخبار لمجرد أن بعض الأخبار أقل أهمية، طالما توجد 3 أخبار صالحة وغير مكررة في البيانات.
 
 معايير اختيار الخبر:
 - يجب أن يحتوي الخبر على معلومة جديدة أو تطور واضح يمكن للقارئ الاستفادة منه.
@@ -2114,8 +2118,12 @@ ${item.link}
 
 قبل الاختيار، قارن الأخبار ببعضها واكتشف الأخبار التي تتحدث عن نفس الحدث. اختر حدثًا واحدًا فقط من كل مجموعة مكررة.
 
-إذا لم توجد أخبار تستحق النشر، أعد:
-{"news":[]}
+قاعدة العدد:
+- إذا كانت البيانات تحتوي على 3 أخبار صالحة أو أكثر، أعد 3 أخبار بالضبط.
+- اختر الأخبار المهمة أولًا.
+- إذا كان عدد الأخبار المهمة أقل من 3، استخدم بعد ذلك أفضل الأخبار الأقل أهمية لإكمال العدد إلى 3.
+- لا تستخدم {"news":[]} إلا إذا لم توجد أخبار صالحة أصلًا، أو كان عدد الأخبار الصالحة أقل من 1.
+- لا تكرر نفس الحدث أو نفس الخبر.
 
 لا تخترع أي معلومة ولا تضف تفاصيل غير موجودة في البيانات.
 استخدم الرابط الموجود مع الخبر نفسه.
@@ -2162,7 +2170,7 @@ ${newsText}
           properties: {
             news: {
               type: 'array',
-              maxItems: MAX_NEWS,
+              maxItems: TARGET_NEWS,
               items: {
                 type: 'object',
                 properties: {
@@ -2223,18 +2231,75 @@ ${newsText}
     throw new Error('❌ Gemini JSON missing news array');
   }
 
-  const selectedNews = validateGeminiNews(parsed, enrichedCandidates);
+  const geminiSelectedNews = validateGeminiNews(parsed, enrichedCandidates);
 
   console.log(
-    `🧩 Gemini validation: ${Array.isArray(parsed.news) ? parsed.news.length : 0} → ${selectedNews.length} valid news`
+    `🧩 Gemini validation: ${Array.isArray(parsed.news) ? parsed.news.length : 0} → ${geminiSelectedNews.length} valid news`
   );
 
+  /*
+    The bot must publish TARGET_NEWS items every hourly run whenever
+    enough valid candidates exist. Gemini decides the priority order,
+    but it is not allowed to reduce the hourly output below the target.
+  */
+  const selectedNews = [...geminiSelectedNews];
+  const selectedLinks = new Set(
+    selectedNews.map(item => item.link)
+  );
+
+  if (selectedNews.length < TARGET_NEWS) {
+    const fallbackCandidates = enrichedCandidates
+      .filter(item => {
+        const link = typeof item.link === 'string'
+          ? item.link.trim()
+          : '';
+
+        return link && !selectedLinks.has(link);
+      })
+      .sort((a, b) => {
+        const scoreDifference =
+          calculateNewsScore(b) - calculateNewsScore(a);
+
+        if (scoreDifference !== 0) return scoreDifference;
+
+        return b.date - a.date;
+      });
+
+    for (const candidate of fallbackCandidates) {
+      if (selectedNews.length >= TARGET_NEWS) break;
+
+      const link = candidate.link.trim();
+
+      selectedNews.push({
+        title: candidate.title.trim().slice(0, 180),
+        summary: (
+          candidate.description ||
+          'خبر جديد في كرة القدم.'
+        ).trim().slice(0, 600),
+        link,
+        googleLink: candidate.googleLink || null
+      });
+
+      selectedLinks.add(link);
+    }
+  }
+
   if (selectedNews.length === 0) {
-    console.log('ℹ️ Gemini found no important news. Nothing to send.');
+    console.log('ℹ️ No valid news candidates available. Nothing to send.');
     return;
   }
 
-  console.log(`🧠 Gemini selected ${selectedNews.length} important news`);
+  if (selectedNews.length < TARGET_NEWS) {
+    console.log(
+      `⚠️ Only ${selectedNews.length} valid news available; sending all available news.`
+    );
+  } else if (geminiSelectedNews.length < TARGET_NEWS) {
+    console.log(
+      `🧩 Gemini selected ${geminiSelectedNews.length}; filled output to ${TARGET_NEWS} news from remaining candidates.`
+    );
+  }
+
+  console.log(`🧠 Final news count: ${selectedNews.length}`);
 
   /*
     =========================================================
