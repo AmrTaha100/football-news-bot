@@ -935,7 +935,7 @@ function normalizeMatchText(text = '') {
     .replace(/\s+/g, ' ')
     .trim()
     // Common Arabic spelling variants for club names.
-    .replace(/\bتشلسي\b/g, 'تشيلسي');
+    .replace(/(^|\s)تشلسي(?=\s|$)/g, '$1تشيلسي');
 }
 
 const MATCH_TEAM_STOP_WORDS = new Set([
