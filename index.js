@@ -882,12 +882,26 @@ function extractMatchScore(text = '') {
     .split(' ')
     .filter(Boolean);
 
-  // "ثلاثية نظيفة" / "ثلاثة أهداف" is conventionally a 3-0 result.
+  // "بثلاثية" / "بثلاثية نظيفة" means a 3-0 result in a match headline.
   for (let i = 0; i < words.length; i++) {
     if (
-      (words[i] === 'ثلاثيه' || words[i] === 'ثلاثية' || words[i] === 'ثلاثه') &&
-      (words[i + 1] === 'نظيفه' || words[i + 1] === 'نظيفة' ||
-       words[i + 1] === 'اهداف' || words[i + 1] === 'هدف')
+      (words[i] === 'بثلاثيه' || words[i] === 'بثلاثية') ||
+      (
+        (words[i] === 'ثلاثيه' || words[i] === 'ثلاثية' || words[i] === 'ثلاثه') &&
+        (words[i + 1] === 'نظيفه' || words[i + 1] === 'نظيفة')
+      )
+    ) {
+      return [3, 0];
+    }
+  }
+
+  // "بثلاثة أهداف دون رد" is an explicit 3-0 result.
+  for (let i = 0; i < words.length - 3; i++) {
+    if (
+      (words[i] === 'بثلاثه' || words[i] === 'بثلاثة') &&
+      (words[i + 1] === 'اهداف' || words[i + 1] === 'أهداف') &&
+      (words[i + 2] === 'دون' || words[i + 2] === 'بدون') &&
+      (words[i + 3] === 'رد')
     ) {
       return [3, 0];
     }
@@ -919,7 +933,9 @@ function normalizeMatchText(text = '') {
     .replace(/[–—−]/g, '-')
     .replace(/[،,.;!?()\[\]{}]/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    // Common Arabic spelling variants for club names.
+    .replace(/\bتشلسي\b/g, 'تشيلسي');
 }
 
 const MATCH_TEAM_STOP_WORDS = new Set([
