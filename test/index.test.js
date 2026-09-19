@@ -347,6 +347,35 @@ test('match fingerprint dedup handles different wording with the same score', ()
   );
 });
 
+test('match fingerprint recognizes "بثلاثية" and normalizes Chelsea spelling variants', () => {
+  const a = story(
+    'تشيلسي يسقط أمام برينتفورد بثلاثية في الدوري الإنجليزي',
+    'تشيلسي تلقى هزيمته بثلاثية نظيفة'
+  );
+  const b = story(
+    'برينتفورد يسقط تشلسي بثلاثية',
+    'برينتفورد يهزم تشلسي بثلاثة أهداف دون رد'
+  );
+
+  assert.deepEqual(extractMatchScore(a.title + ' ' + a.description), [3, 0]);
+  assert.deepEqual(extractMatchScore(b.title + ' ' + b.description), [3, 0]);
+  assert.deepEqual(getEventFingerprint(a).teams, ['تشيلسي', 'برينتفورد']);
+  assert.deepEqual(getEventFingerprint(b).teams, ['برينتفورد', 'تشيلسي']);
+
+  const seen = new Map();
+  markSeen(seen, {
+    ...a,
+    link: 'https://site-a.example/match',
+    date: new Date('2026-09-19T00:00:00Z')
+  }, Date.parse('2026-09-19T00:00:00Z'));
+
+  assert.equal(hasPublishedEvent(seen, {
+    ...b,
+    link: 'https://site-b.example/match',
+    date: new Date('2026-09-19T12:00:00Z')
+  }), true);
+});
+
 test('match fingerprint keeps only the two teams, not league or round tokens', () => {
   const item = story(
     'برينتفورد يهزم تشيلسي 3-0 في الجولة الخامسة من الدوري الانجليزي',
